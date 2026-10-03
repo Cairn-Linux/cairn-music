@@ -1,0 +1,14 @@
+# Build output and local probes
+/build/
+/build-*/
+.cmake/
+.cache/
+*.user
+*.autosave
+aqtinstall.log
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+*~

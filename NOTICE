@@ -1,0 +1,15 @@
+Cairn Music is an independent application within the Cairn Linux open-source
+project. It is not currently a released product.
+
+Unless a file states otherwise:
+
+- source code is licensed under the Apache License 2.0 in LICENSE;
+- documentation and original visual assets are licensed under Creative Commons
+  Attribution-ShareAlike 4.0 in LICENSE-CC-BY-SA-4.0; and
+- third-party dependencies, fonts, icons, samples, soundfonts and recordings
+  retain their own licences and must be recorded here or in a dedicated asset
+  provenance manifest before distribution.
+
+The Cairn Linux name and stacked-stones mark are governed separately by the
+main Cairn project's trademark policy. Copyright licences do not grant
+trademark permission.

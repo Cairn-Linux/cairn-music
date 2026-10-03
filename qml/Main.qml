@@ -1,0 +1,516 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+ApplicationWindow {
+    id: root
+    width: 1180
+    height: 760
+    minimumWidth: 900
+    minimumHeight: 620
+    visible: true
+    title: qsTr("Cairn Music — Pictures Prototype")
+    color: "#21152f"
+
+    property bool eraseMode: false
+    property int cellWidth: 72
+    property int rowHeight: 58
+    property int rowGap: 5
+    property int totalSteps: app.composition.measureCount * app.composition.stepsPerMeasure
+    property var pitchColors: ["#ff6b81", "#ff9f43", "#feca57", "#4cd137",
+                               "#38ada9", "#54a0ff", "#a66cff"]
+    property var soundColors: ["#ff8f5a", "#ffd166", "#5ee1d2", "#cb8cff"]
+    property var soundMarks: ["▥", "◆", "◒", "○"]
+    property var soundNames: [qsTr("Keys"), qsTr("Bell"), qsTr("Bird"), qsTr("Bubble")]
+    property var drumColors: ["#ff5d8f", "#57c7ff"]
+    property var drumMarks: ["●", "✦"]
+    property var drumNames: [qsTr("Thump"), qsTr("Clap")]
+
+    Rectangle {
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0; color: "#2d1b45" }
+            GradientStop { position: 1; color: "#151022" }
+        }
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 24
+        spacing: 18
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 14
+
+            ColumnLayout {
+                spacing: 1
+                Label {
+                    text: qsTr("PICTURES")
+                    color: "#f8cf74"
+                    font.pixelSize: 13
+                    font.bold: true
+                    font.letterSpacing: 2
+                }
+                Label {
+                    text: qsTr("Make a sound. Place a picture. Hear your song.")
+                    color: "#fff8ec"
+                    font.pixelSize: 25
+                    font.bold: true
+                }
+            }
+
+            Item { Layout.fillWidth: true }
+
+            ToolButton {
+                text: qsTr("↶  Undo")
+                enabled: app.composition.canUndo
+                font.pixelSize: 16
+                onClicked: app.undo()
+                Accessible.name: qsTr("Undo last change")
+            }
+            ToolButton {
+                id: eraserButton
+                text: root.eraseMode ? qsTr("✓  Eraser") : qsTr("✕  Eraser")
+                checkable: true
+                checked: root.eraseMode
+                font.pixelSize: 16
+                onClicked: root.eraseMode = checked
+                Accessible.name: qsTr("Eraser tool")
+            }
+            Button {
+                id: playButton
+                objectName: "playButton"
+                text: app.playing ? qsTr("■  Stop") : qsTr("▶  Play")
+                highlighted: true
+                font.pixelSize: 17
+                onClicked: app.playing ? app.stop() : app.play()
+                Accessible.name: app.playing ? qsTr("Stop song") : qsTr("Play song")
+            }
+            CheckBox {
+                text: qsTr("Loop")
+                font.pixelSize: 15
+                checked: app.loopEnabled
+                onToggled: app.loopEnabled = checked
+                Accessible.name: qsTr("Loop whole song")
+            }
+        }
+
+        Rectangle {
+            objectName: "saveFailureBanner"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 54
+            visible: app.saveFailed && !app.loadFailed
+            radius: 14
+            color: "#fff0c2"
+            border.color: "#d69f32"
+            border.width: 2
+            Accessible.name: app.saveFailureMessage
+
+            Label {
+                anchors.centerIn: parent
+                width: parent.width - 32
+                text: app.saveFailureMessage
+                color: "#5c3b00"
+                font.pixelSize: 17
+                font.bold: true
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 18
+
+            Rectangle {
+                Layout.preferredWidth: 176
+                Layout.fillHeight: true
+                radius: 22
+                color: "#36254c"
+                border.color: "#5b4774"
+                border.width: 1
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 10
+
+                    Label {
+                        text: qsTr("SOUNDS")
+                        color: "#d9c8eb"
+                        font.pixelSize: 13
+                        font.bold: true
+                        font.letterSpacing: 1.5
+                    }
+
+                    Repeater {
+                        model: 4
+                        delegate: Button {
+                            required property int index
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 68
+                            checkable: true
+                            checked: app.selectedKind === "pitched" && app.selectedSound === index
+                            onClicked: {
+                                root.eraseMode = false
+                                app.selectPitched(index)
+                            }
+                            Accessible.name: root.soundNames[index]
+
+                            contentItem: Row {
+                                spacing: 12
+                                anchors.centerIn: parent
+                                Rectangle {
+                                    width: 38
+                                    height: 38
+                                    radius: 19
+                                    color: root.soundColors[index]
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: root.soundMarks[index]
+                                        color: "#21152f"
+                                        font.pixelSize: 22
+                                        font.bold: true
+                                    }
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: root.soundNames[index]
+                                    color: "#3a2948"
+                                    font.pixelSize: 16
+                                    font.bold: true
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#5b4774"
+                    }
+
+                    Label {
+                        text: qsTr("DRUMS")
+                        color: "#d9c8eb"
+                        font.pixelSize: 13
+                        font.bold: true
+                        font.letterSpacing: 1.5
+                    }
+
+                    Repeater {
+                        model: 2
+                        delegate: Button {
+                            required property int index
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 58
+                            checkable: true
+                            checked: app.selectedKind === "percussion" && app.selectedSound === index
+                            onClicked: {
+                                root.eraseMode = false
+                                app.selectPercussion(index)
+                            }
+                            Accessible.name: root.drumNames[index]
+
+                            contentItem: Row {
+                                spacing: 12
+                                anchors.centerIn: parent
+                                Rectangle {
+                                    width: 34
+                                    height: 34
+                                    radius: 9
+                                    color: root.drumColors[index]
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: root.drumMarks[index]
+                                        color: "#21152f"
+                                        font.pixelSize: 20
+                                        font.bold: true
+                                    }
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: root.drumNames[index]
+                                    color: "#3a2948"
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                }
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillHeight: true }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 22
+                color: "#fff8ec"
+                border.color: "#f0d9ad"
+                border.width: 2
+                clip: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label {
+                            text: qsTr("My song")
+                            color: "#3a2948"
+                            font.pixelSize: 20
+                            font.bold: true
+                        }
+                        Label {
+                            text: qsTr("%1 measures").arg(app.composition.measureCount)
+                            color: "#7b668d"
+                            font.pixelSize: 14
+                        }
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: qsTr("＋  Add measure")
+                            enabled: app.composition.measureCount < 8
+                            onClicked: app.addMeasure()
+                            Accessible.name: qsTr("Add one measure")
+                        }
+                    }
+
+                    Flickable {
+                        id: timeline
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        contentWidth: Math.max(width, root.totalSteps * root.cellWidth + 20)
+                        contentHeight: 7 * (root.rowHeight + root.rowGap) + 150
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+
+                        Item {
+                            id: canvas
+                            width: timeline.contentWidth
+                            height: timeline.contentHeight
+
+                            Repeater {
+                                model: root.totalSteps
+                                delegate: Rectangle {
+                                    required property int index
+                                    x: index * root.cellWidth
+                                    y: 0
+                                    width: 2
+                                    height: 7 * (root.rowHeight + root.rowGap)
+                                    color: index % 4 === 0 ? "#d4b879" : "#eadcc2"
+                                    opacity: index % 4 === 0 ? 0.95 : 0.65
+                                }
+                            }
+
+                            Grid {
+                                id: pitchGrid
+                                objectName: "pitchGrid"
+                                columns: root.totalSteps
+                                rows: 7
+                                spacing: root.rowGap
+
+                                Repeater {
+                                    model: 7 * root.totalSteps
+                                    delegate: Rectangle {
+                                        required property int index
+                                        property int visualRow: Math.floor(index / root.totalSteps)
+                                        property int stepIndex: index % root.totalSteps
+                                        property int pitch: 6 - visualRow
+                                        width: root.cellWidth - root.rowGap
+                                        height: root.rowHeight
+                                        radius: 12
+                                        color: Qt.rgba(root.pitchColors[pitch].r,
+                                                       root.pitchColors[pitch].g,
+                                                       root.pitchColors[pitch].b, 0.13)
+                                        border.color: stepIndex % 4 === 0 ? "#c6a860" : "#decda9"
+                                        border.width: stepIndex % 4 === 0 ? 2 : 1
+
+                                        Rectangle {
+                                            anchors.left: parent.left
+                                            anchors.leftMargin: 7
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 7
+                                            height: 7
+                                            radius: 4
+                                            color: root.pitchColors[parent.pitch]
+                                            opacity: 0.7
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (root.eraseMode)
+                                                    app.eraseAt("pitched", parent.stepIndex, parent.pitch)
+                                                else if (app.selectedKind === "pitched")
+                                                    app.placePitched(parent.stepIndex, parent.pitch)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                x: 0
+                                y: 7 * (root.rowHeight + root.rowGap) + 12
+                                width: parent.width
+                                height: 4
+                                radius: 2
+                                color: "#6e557d"
+                                opacity: 0.45
+                            }
+
+                            Grid {
+                                id: drumLane
+                                objectName: "drumLane"
+                                x: 0
+                                y: 7 * (root.rowHeight + root.rowGap) + 28
+                                columns: root.totalSteps
+                                rows: 2
+                                spacing: root.rowGap
+
+                                Repeater {
+                                    model: 2 * root.totalSteps
+                                    delegate: Rectangle {
+                                        required property int index
+                                        property int drumRow: Math.floor(index / root.totalSteps)
+                                        property int stepIndex: index % root.totalSteps
+                                        width: root.cellWidth - root.rowGap
+                                        height: 46
+                                        radius: 10
+                                        color: Qt.rgba(root.drumColors[drumRow].r,
+                                                       root.drumColors[drumRow].g,
+                                                       root.drumColors[drumRow].b, 0.15)
+                                        border.color: stepIndex % 4 === 0 ? "#9a6c82" : "#d8b8bf"
+                                        border.width: stepIndex % 4 === 0 ? 2 : 1
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: root.drumMarks[parent.drumRow]
+                                            color: root.drumColors[parent.drumRow]
+                                            font.pixelSize: 17
+                                            opacity: 0.65
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (root.eraseMode)
+                                                    app.eraseAt("percussion", parent.stepIndex,
+                                                                parent.drumRow)
+                                                else if (app.selectedKind === "percussion"
+                                                         && app.selectedSound === parent.drumRow)
+                                                    app.placePercussion(parent.stepIndex)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Repeater {
+                                model: app.composition
+                                delegate: Rectangle {
+                                    required property string kind
+                                    required property int step
+                                    required property int pitchRow
+                                    required property int soundId
+                                    property bool pitched: kind === "pitched"
+                                    x: step * root.cellWidth + 12
+                                    y: pitched
+                                       ? (6 - pitchRow) * (root.rowHeight + root.rowGap) + 9
+                                       : 7 * (root.rowHeight + root.rowGap) + 37
+                                           + pitchRow * (46 + root.rowGap)
+                                    width: pitched ? 42 : 40
+                                    height: pitched ? 42 : 34
+                                    radius: pitched ? 21 : 10
+                                    color: pitched ? root.soundColors[soundId]
+                                                   : root.drumColors[soundId]
+                                    border.color: "#ffffff"
+                                    border.width: 3
+                                    z: 5
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: parent.pitched ? root.soundMarks[parent.soundId]
+                                                             : root.drumMarks[parent.soundId]
+                                        color: "#21152f"
+                                        font.pixelSize: parent.pitched ? 23 : 19
+                                        font.bold: true
+                                    }
+
+                                    SequentialAnimation on scale {
+                                        running: true
+                                        NumberAnimation { to: 1.18; duration: 90 }
+                                        NumberAnimation { to: 1.0; duration: 150 }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (root.eraseMode)
+                                                app.eraseAt(parent.kind, parent.step, parent.pitchRow)
+                                            else if (parent.pitched && app.selectedKind === "pitched")
+                                                app.placePitched(parent.step, parent.pitchRow)
+                                            else if (!parent.pitched && app.selectedKind === "percussion"
+                                                     && app.selectedSound === parent.pitchRow)
+                                                app.placePercussion(parent.step)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                    }
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: loadFailurePopup
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(460, root.width - 48)
+        modal: true
+        visible: app.loadFailed
+        closePolicy: Popup.NoAutoClose
+        padding: 28
+
+        background: Rectangle {
+            radius: 20
+            color: "#fff8ec"
+            border.color: "#f0d9ad"
+            border.width: 2
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 18
+
+            Label {
+                Layout.fillWidth: true
+                text: app.loadFailureMessage
+                color: "#3a2948"
+                font.pixelSize: 22
+                font.bold: true
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                Accessible.name: text
+            }
+
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: qsTr("Keep it safe and start a new song")
+                onClicked: app.preserveFailedAutosaveAndStartNew()
+                Accessible.name: qsTr("Preserve the old song and start a new song")
+            }
+        }
+    }
+}

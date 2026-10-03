@@ -2,6 +2,7 @@
 
 #include <QtEndian>
 #include <QJsonArray>
+#include <QVector>
 
 #include <algorithm>
 #include <cmath>
@@ -107,8 +108,9 @@ QByteArray AudioRenderer::renderComposition(const QJsonObject &project, int temp
     const int tempo = std::clamp(tempoBpm, 40, 240);
     const int beatMs = 60000 / tempo;
     const int bytesPerFrame = int(sizeof(qint16) * 2);
-    const int totalFrames = sampleRate * measures * 4 * beatMs / 1000;
-    QByteArray result(totalFrames * bytesPerFrame, 0);
+    const qsizetype totalFrames = qsizetype(sampleRate) * measures * 4 * beatMs / 1000;
+    const qsizetype totalSamples = totalFrames * 2;
+    QVector<qint64> mix(totalSamples, 0);
 
     const QJsonArray tokens = project.value(QStringLiteral("tokens")).toArray();
     for (const QJsonValue &value : tokens) {
@@ -123,18 +125,22 @@ QByteArray AudioRenderer::renderComposition(const QJsonObject &project, int temp
         const QByteArray voice = kind == QStringLiteral("percussion")
             ? renderPercussion(sound, std::min(beatMs, 240))
             : renderPitched(sound, row, std::min(beatMs, 420));
-        const int startByte = sampleRate * step * beatMs / 1000 * bytesPerFrame;
-        for (int offset = 0; offset + int(sizeof(qint16)) <= voice.size()
-             && startByte + offset + int(sizeof(qint16)) <= result.size();
-             offset += int(sizeof(qint16))) {
+        const qsizetype startSample = qsizetype(sampleRate) * step * beatMs / 1000 * 2;
+        for (qsizetype offset = 0; offset + qsizetype(sizeof(qint16)) <= voice.size()
+             && startSample + offset / qsizetype(sizeof(qint16)) < mix.size();
+             offset += qsizetype(sizeof(qint16))) {
             const qint16 source = qFromLittleEndian<qint16>(voice.constData() + offset);
-            const qint16 existing = qFromLittleEndian<qint16>(
-                result.constData() + startByte + offset);
-            const qint16 mixed = static_cast<qint16>(std::clamp(
-                int(existing) + int(source), int(std::numeric_limits<qint16>::min()),
-                int(std::numeric_limits<qint16>::max())));
-            qToLittleEndian(mixed, result.data() + startByte + offset);
+            mix[startSample + offset / qsizetype(sizeof(qint16))] += source;
         }
+    }
+
+    QByteArray result(totalFrames * bytesPerFrame, Qt::Uninitialized);
+    for (qsizetype sampleIndex = 0; sampleIndex < mix.size(); ++sampleIndex) {
+        const qint16 sample = static_cast<qint16>(std::clamp(
+            mix.at(sampleIndex), qint64(std::numeric_limits<qint16>::min()),
+            qint64(std::numeric_limits<qint16>::max())));
+        qToLittleEndian(sample,
+                        result.data() + sampleIndex * int(sizeof(qint16)));
     }
     return result;
 }

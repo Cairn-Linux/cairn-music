@@ -57,6 +57,8 @@ AppController::AppController(const QString &autosavePath, bool audioEnabled,
         }
         emit playingChanged();
     });
+    connect(m_audio.get(), &AudioEngine::errorChanged,
+            this, &AppController::audioFailedChanged);
 }
 
 CompositionModel *AppController::composition() noexcept
@@ -102,6 +104,16 @@ bool AppController::saveFailed() const noexcept
 QString AppController::saveFailureMessage() const
 {
     return m_saveFailed ? tr("Your song is here, but it is not saved yet.") : QString{};
+}
+
+bool AppController::audioFailed() const noexcept
+{
+    return m_audio->hasError();
+}
+
+QString AppController::audioFailureMessage() const
+{
+    return audioFailed() ? tr("Sound stopped. You can try Play again.") : QString{};
 }
 
 void AppController::selectPitched(int soundId)

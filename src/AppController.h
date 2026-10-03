@@ -20,6 +20,8 @@ class AppController final : public QObject
     Q_PROPERTY(QString loadFailureMessage READ loadFailureMessage NOTIFY loadFailedChanged)
     Q_PROPERTY(bool saveFailed READ saveFailed NOTIFY saveFailedChanged)
     Q_PROPERTY(QString saveFailureMessage READ saveFailureMessage NOTIFY saveFailedChanged)
+    Q_PROPERTY(bool audioFailed READ audioFailed NOTIFY audioFailedChanged)
+    Q_PROPERTY(QString audioFailureMessage READ audioFailureMessage NOTIFY audioFailedChanged)
 
 public:
     explicit AppController(const QString &autosavePath = {}, bool audioEnabled = true,
@@ -36,6 +38,8 @@ public:
     [[nodiscard]] QString loadFailureMessage() const;
     [[nodiscard]] bool saveFailed() const noexcept;
     [[nodiscard]] QString saveFailureMessage() const;
+    [[nodiscard]] bool audioFailed() const noexcept;
+    [[nodiscard]] QString audioFailureMessage() const;
 
     Q_INVOKABLE void selectPitched(int soundId);
     Q_INVOKABLE void selectPercussion(int soundId);
@@ -55,6 +59,7 @@ signals:
     void playingChanged();
     void loadFailedChanged();
     void saveFailedChanged();
+    void audioFailedChanged();
 
 private:
     bool save();

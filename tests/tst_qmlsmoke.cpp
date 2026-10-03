@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <QtTest/qtestaccessible.h>
 #include <QAccessible>
 #include <QFile>
 #include <QQmlApplicationEngine>
@@ -14,6 +15,7 @@ class QmlSmokeTest : public QObject
 private slots:
     void loadsPicturesWorkspace();
     void showsAutosaveFailureWarning();
+    void showsRecoverableAudioFailureWarning();
 };
 
 void QmlSmokeTest::loadsPicturesWorkspace()
@@ -60,6 +62,56 @@ void QmlSmokeTest::showsAutosaveFailureWarning()
     QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(banner);
     QVERIFY(accessible != nullptr);
     QCOMPARE(accessible->text(QAccessible::Name), controller.saveFailureMessage());
+}
+
+void QmlSmokeTest::showsRecoverableAudioFailureWarning()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<AudioEngine>(false);
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+
+    QTestAccessibility::initialize();
+    QTestAccessibility::clearEvents();
+    controller.play();
+    QCoreApplication::processEvents();
+
+    QObject *root = engine.rootObjects().constFirst();
+    QObject *banner = root->findChild<QObject *>("audioFailureBanner");
+    QVERIFY(banner != nullptr);
+    QVERIFY(banner->property("visible").toBool());
+    QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(banner);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->text(QAccessible::Name), controller.audioFailureMessage());
+    QCOMPARE(accessible->role(), QAccessible::AlertMessage);
+
+    bool announced = false;
+    for (const QAccessibleEvent *event : QTestAccessibility::events()) {
+        if (event->type() != QAccessible::Announcement) {
+            continue;
+        }
+        const auto *announcement = static_cast<const QAccessibleAnnouncementEvent *>(event);
+        if (announcement->message() == controller.audioFailureMessage()
+            && announcement->politeness() == QAccessible::AnnouncementPoliteness::Polite) {
+            announced = true;
+            break;
+        }
+    }
+    QVERIFY(announced);
+
+    QObject *playButton = root->findChild<QObject *>("playButton");
+    QVERIFY(playButton != nullptr);
+    QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Play")));
+
+    qDeleteAll(QTestAccessibility::events());
+    QTestAccessibility::clearEvents();
+    QTestAccessibility::cleanup();
 }
 
 QTEST_MAIN(QmlSmokeTest)

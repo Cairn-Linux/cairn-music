@@ -119,6 +119,34 @@ ApplicationWindow {
             }
         }
 
+        Rectangle {
+            objectName: "audioFailureBanner"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 54
+            visible: app.audioFailed && !app.loadFailed
+            radius: 14
+            color: "#d9f3ff"
+            border.color: "#3b9fc4"
+            border.width: 2
+            Accessible.name: app.audioFailureMessage
+            Accessible.role: Accessible.AlertMessage
+            onVisibleChanged: {
+                if (visible)
+                    Accessible.announce(app.audioFailureMessage, Accessible.Polite)
+            }
+
+            Label {
+                anchors.centerIn: parent
+                width: parent.width - 32
+                text: app.audioFailureMessage
+                color: "#123e52"
+                font.pixelSize: 17
+                font.bold: true
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+            }
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true

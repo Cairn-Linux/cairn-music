@@ -27,6 +27,8 @@ AudioEngine::AudioEngine(bool initializeOutput, QObject *parent)
         m_sink = std::make_unique<QAudioSink>(device, format, this);
         connect(m_sink.get(), &QAudioSink::stateChanged,
                 this, &AudioEngine::handleState);
+    } else {
+        m_error = true;
     }
 }
 
@@ -40,6 +42,20 @@ bool AudioEngine::loopEnabled() const noexcept
     return m_loop;
 }
 
+bool AudioEngine::hasError() const noexcept
+{
+    return m_error;
+}
+
+void AudioEngine::setError(bool error)
+{
+    if (m_error == error) {
+        return;
+    }
+    m_error = error;
+    emit errorChanged();
+}
+
 void AudioEngine::setLoopEnabled(bool enabled)
 {
     m_loop = enabled;
@@ -47,19 +63,27 @@ void AudioEngine::setLoopEnabled(bool enabled)
 
 bool AudioEngine::play(const QByteArray &pcm, bool loop)
 {
-    if (!m_sink || pcm.isEmpty()) {
+    if (!outputAvailable() || pcm.isEmpty()) {
+        setError(true);
         return false;
     }
 
-    m_sink->stop();
+    stopOutput();
     m_buffer.close();
     m_pcm = pcm;
     m_loop = loop;
     m_buffer.setData(m_pcm);
     if (!m_buffer.open(QIODevice::ReadOnly)) {
+        setError(true);
         return false;
     }
-    m_sink->start(&m_buffer);
+    setError(false);
+    startOutput(&m_buffer);
+    if (outputError() != QAudio::NoError || outputState() == QAudio::StoppedState) {
+        releasePlayback();
+        setError(true);
+        return false;
+    }
     if (!m_playing) {
         m_playing = true;
         emit playingChanged();
@@ -69,10 +93,18 @@ bool AudioEngine::play(const QByteArray &pcm, bool loop)
 
 void AudioEngine::stop()
 {
-    if (m_sink) {
-        m_sink->stop();
+    if (outputAvailable()) {
+        stopOutput();
     }
+    releasePlayback();
+}
+
+void AudioEngine::releasePlayback()
+{
     m_buffer.close();
+    m_buffer.setData({});
+    m_pcm.clear();
+    m_loop = false;
     if (m_playing) {
         m_playing = false;
         emit playingChanged();
@@ -81,20 +113,68 @@ void AudioEngine::stop()
 
 void AudioEngine::handleState(QAudio::State state)
 {
+    // QAudioSink reports some failures, notably UnderrunError, with IdleState
+    // rather than StoppedState. Handle the error before interpreting Idle as
+    // either natural completion or a loop boundary.
+    if (outputError() != QAudio::NoError) {
+        stop();
+        setError(true);
+        return;
+    }
     if (state != QAudio::IdleState) {
         return;
     }
-    if (m_loop && restartPlayback()) {
-        return;
+    if (m_loop) {
+        if (restartPlayback()) {
+            return;
+        }
+        stop();
+        setError(true);
+    } else {
+        stop();
     }
-    stop();
 }
 
 bool AudioEngine::restartPlayback()
 {
-    if (!m_sink || !m_buffer.isOpen() || !m_buffer.seek(0)) {
+    if (!outputAvailable() || !m_buffer.isOpen() || !m_buffer.seek(0)) {
         return false;
     }
-    m_sink->start(&m_buffer);
-    return true;
+    startOutput(&m_buffer);
+    return outputError() == QAudio::NoError && outputState() != QAudio::StoppedState;
+}
+
+bool AudioEngine::outputAvailable() const noexcept
+{
+    return m_sink != nullptr;
+}
+
+QAudio::Error AudioEngine::outputError() const noexcept
+{
+    return m_sink ? m_sink->error() : QAudio::OpenError;
+}
+
+QAudio::State AudioEngine::outputState() const noexcept
+{
+    return m_sink ? m_sink->state() : QAudio::StoppedState;
+}
+
+void AudioEngine::startOutput(QIODevice *device)
+{
+    m_sink->start(device);
+}
+
+void AudioEngine::stopOutput()
+{
+    m_sink->stop();
+}
+
+bool AudioEngine::activeBufferOpen() const noexcept
+{
+    return m_buffer.isOpen();
+}
+
+qsizetype AudioEngine::bufferedByteCount() const noexcept
+{
+    return m_pcm.size() + m_buffer.data().size();
 }

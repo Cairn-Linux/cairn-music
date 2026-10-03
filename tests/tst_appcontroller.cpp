@@ -17,46 +17,77 @@ public:
     {
     }
 
-    [[nodiscard]] bool playing() const noexcept override { return m_fakePlaying; }
-    bool play(const QByteArray &pcm, bool loop) override
+    void finishCurrentBuffer()
     {
-        if (pcm.isEmpty()) {
-            return false;
-        }
-        ++playCalls;
-        AudioEngine::setLoopEnabled(loop);
-        if (!m_fakePlaying) {
-            m_fakePlaying = true;
-            emit playingChanged();
-        }
-        return true;
+        m_outputState = QAudio::IdleState;
+        handleState(m_outputState);
     }
 
-    void stop() override
+    void failWithOutputError()
     {
-        if (m_fakePlaying) {
-            m_fakePlaying = false;
-            emit playingChanged();
-        }
+        m_outputError = QAudio::IOError;
+        m_outputState = QAudio::StoppedState;
+        handleState(m_outputState);
     }
 
-    void finishCurrentBuffer() { handleState(QAudio::IdleState); }
+    void failWithUnderrun()
+    {
+        m_outputError = QAudio::UnderrunError;
+        m_outputState = QAudio::IdleState;
+        handleState(m_outputState);
+    }
 
-    int playCalls = 0;
-    int restartCalls = 0;
+    void notifyStoppedState()
+    {
+        m_outputError = QAudio::NoError;
+        m_outputState = QAudio::StoppedState;
+        handleState(m_outputState);
+    }
+
+    [[nodiscard]] bool resourcesReleased() const noexcept
+    {
+        return !activeBufferOpen() && bufferedByteCount() == 0;
+    }
+
+    int startCalls = 0;
+    int stopCalls = 0;
+    bool startSucceeds = true;
 
 protected:
-    bool restartPlayback() override
+    [[nodiscard]] bool outputAvailable() const noexcept override { return true; }
+    [[nodiscard]] QAudio::Error outputError() const noexcept override
     {
-        if (!m_fakePlaying) {
-            return false;
+        return m_outputError;
+    }
+    [[nodiscard]] QAudio::State outputState() const noexcept override
+    {
+        return m_outputState;
+    }
+
+    void startOutput(QIODevice *) override
+    {
+        ++startCalls;
+        if (startSucceeds) {
+            m_outputError = QAudio::NoError;
+            m_outputState = QAudio::ActiveState;
+            return;
         }
-        ++restartCalls;
-        return true;
+        m_outputError = QAudio::OpenError;
+        m_outputState = QAudio::StoppedState;
+        handleState(m_outputState);
+    }
+
+    void stopOutput() override
+    {
+        ++stopCalls;
+        m_outputError = QAudio::NoError;
+        m_outputState = QAudio::StoppedState;
+        handleState(m_outputState);
     }
 
 private:
-    bool m_fakePlaying = false;
+    QAudio::Error m_outputError = QAudio::NoError;
+    QAudio::State m_outputState = QAudio::StoppedState;
 };
 
 class AppControllerTest : public QObject
@@ -72,6 +103,10 @@ private slots:
     void stopDoesNotRestartLoopingPlayback();
     void playOnceStopsAtNaturalCompletion();
     void previewInterruptsCompositionLoopPolicy();
+    void recoversFromOutputError();
+    void idleUnderrunStopsInsteadOfRestartingLoop();
+    void failedLoopRestartBecomesRecoverableError();
+    void repeatedPlayStopCyclesStayConsistent();
 };
 
 void AppControllerTest::placesSelectedSoundAndReopensAutosave()
@@ -204,7 +239,8 @@ void AppControllerTest::turnsLoopOnDuringPlayback()
 
     fakeAudio->finishCurrentBuffer();
     QVERIFY(fakeAudio->playing());
-    QCOMPARE(fakeAudio->restartCalls, 1);
+    QCOMPARE(fakeAudio->startCalls, 2);
+    QVERIFY(!fakeAudio->resourcesReleased());
 }
 
 void AppControllerTest::turnsLoopOffDuringPlayback()
@@ -227,7 +263,8 @@ void AppControllerTest::turnsLoopOffDuringPlayback()
 
     fakeAudio->finishCurrentBuffer();
     QVERIFY(!fakeAudio->playing());
-    QCOMPARE(fakeAudio->restartCalls, 0);
+    QCOMPARE(fakeAudio->startCalls, 1);
+    QVERIFY(fakeAudio->resourcesReleased());
 }
 
 void AppControllerTest::stopDoesNotRestartLoopingPlayback()
@@ -241,15 +278,15 @@ void AppControllerTest::stopDoesNotRestartLoopingPlayback()
 
     controller.setLoopEnabled(true);
     controller.play();
-    QCOMPARE(fakeAudio->playCalls, 1);
+    QCOMPARE(fakeAudio->startCalls, 1);
     QVERIFY(fakeAudio->playing());
 
     controller.stop();
     QVERIFY(!fakeAudio->playing());
     fakeAudio->finishCurrentBuffer();
     QVERIFY(!fakeAudio->playing());
-    QCOMPARE(fakeAudio->playCalls, 1);
-    QCOMPARE(fakeAudio->restartCalls, 0);
+    QCOMPARE(fakeAudio->startCalls, 1);
+    QVERIFY(fakeAudio->resourcesReleased());
 }
 
 void AppControllerTest::playOnceStopsAtNaturalCompletion()
@@ -267,7 +304,8 @@ void AppControllerTest::playOnceStopsAtNaturalCompletion()
 
     fakeAudio->finishCurrentBuffer();
     QVERIFY(!fakeAudio->playing());
-    QCOMPARE(fakeAudio->restartCalls, 0);
+    QCOMPARE(fakeAudio->startCalls, 1);
+    QVERIFY(fakeAudio->resourcesReleased());
 }
 
 void AppControllerTest::previewInterruptsCompositionLoopPolicy()
@@ -286,14 +324,114 @@ void AppControllerTest::previewInterruptsCompositionLoopPolicy()
     controller.selectPitched(2);
     QVERIFY(fakeAudio->playing());
     QVERIFY(!fakeAudio->loopEnabled());
-    QCOMPARE(fakeAudio->playCalls, 2);
+    QCOMPARE(fakeAudio->startCalls, 2);
 
     controller.setLoopEnabled(false);
     controller.setLoopEnabled(true);
     QVERIFY(!fakeAudio->loopEnabled());
     fakeAudio->finishCurrentBuffer();
     QVERIFY(!fakeAudio->playing());
-    QCOMPARE(fakeAudio->restartCalls, 0);
+    QCOMPARE(fakeAudio->startCalls, 2);
+    QVERIFY(fakeAudio->resourcesReleased());
+}
+
+void AppControllerTest::recoversFromOutputError()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    QSignalSpy playingChanged(&controller, &AppController::playingChanged);
+    QSignalSpy audioFailedChanged(&controller, &AppController::audioFailedChanged);
+
+    controller.play();
+    QVERIFY(controller.playing());
+    fakeAudio->failWithOutputError();
+
+    QVERIFY(!controller.playing());
+    QVERIFY(controller.audioFailed());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.audioFailureMessage(),
+             QStringLiteral("Sound stopped. You can try Play again."));
+    QCOMPARE(playingChanged.count(), 2);
+    QCOMPARE(audioFailedChanged.count(), 1);
+
+    controller.play();
+    QVERIFY(controller.playing());
+    QVERIFY(!controller.audioFailed());
+    QVERIFY(controller.audioFailureMessage().isEmpty());
+    QCOMPARE(audioFailedChanged.count(), 2);
+}
+
+void AppControllerTest::idleUnderrunStopsInsteadOfRestartingLoop()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    controller.setLoopEnabled(true);
+    controller.play();
+    QCOMPARE(fakeAudio->startCalls, 1);
+
+    fakeAudio->failWithUnderrun();
+
+    QVERIFY(!controller.playing());
+    QVERIFY(controller.audioFailed());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(fakeAudio->startCalls, 1);
+
+    controller.play();
+    QVERIFY(controller.playing());
+    QVERIFY(!controller.audioFailed());
+}
+
+void AppControllerTest::failedLoopRestartBecomesRecoverableError()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->startSucceeds = false;
+    fakeAudio->finishCurrentBuffer();
+
+    QVERIFY(!controller.playing());
+    QVERIFY(controller.audioFailed());
+    QCOMPARE(fakeAudio->startCalls, 2);
+    QVERIFY(fakeAudio->resourcesReleased());
+}
+
+void AppControllerTest::repeatedPlayStopCyclesStayConsistent()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    QSignalSpy playingChanged(&controller, &AppController::playingChanged);
+
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        controller.play();
+        QVERIFY(controller.playing());
+        controller.stop();
+        fakeAudio->notifyStoppedState();
+        QVERIFY(!controller.playing());
+        QVERIFY(!controller.audioFailed());
+    }
+
+    QCOMPARE(fakeAudio->startCalls, 10);
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(playingChanged.count(), 20);
 }
 
 QTEST_MAIN(AppControllerTest)

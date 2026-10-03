@@ -31,21 +31,32 @@ QByteArray fileSha256(const QString &path)
 }
 
 AppController::AppController(const QString &autosavePath, bool audioEnabled, QObject *parent)
+    : AppController(autosavePath, audioEnabled, std::make_unique<AudioEngine>(), parent)
+{
+}
+
+AppController::AppController(const QString &autosavePath, bool audioEnabled,
+                             std::unique_ptr<AudioEngine> audio, QObject *parent)
     : QObject(parent)
-    , m_audio(this)
+    , m_audio(audio ? std::move(audio) : std::make_unique<AudioEngine>())
     , m_autosavePath(autosavePath.isEmpty()
           ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
               + QStringLiteral("/prototype-autosave.json")
           : autosavePath)
     , m_audioEnabled(audioEnabled)
 {
+    m_audio->setParent(nullptr);
     if (QFileInfo::exists(m_autosavePath)
         && !ProjectStore::load(m_autosavePath, m_composition)) {
         m_loadFailed = true;
         ensureRecoveryCopy();
     }
-    connect(&m_audio, &AudioEngine::playingChanged,
-            this, &AppController::playingChanged);
+    connect(m_audio.get(), &AudioEngine::playingChanged, this, [this] {
+        if (!m_audio->playing()) {
+            m_compositionPlaybackActive = false;
+        }
+        emit playingChanged();
+    });
 }
 
 CompositionModel *AppController::composition() noexcept
@@ -70,7 +81,7 @@ bool AppController::loopEnabled() const noexcept
 
 bool AppController::playing() const noexcept
 {
-    return m_audio.playing();
+    return m_audio->playing();
 }
 
 bool AppController::loadFailed() const noexcept
@@ -102,7 +113,9 @@ void AppController::selectPitched(int soundId)
     m_selectedSound = soundId;
     emit selectionChanged();
     if (m_audioEnabled) {
-        m_audio.play(AudioRenderer::renderPitched(soundId, 3, 180));
+        if (m_audio->play(AudioRenderer::renderPitched(soundId, 3, 180))) {
+            m_compositionPlaybackActive = false;
+        }
     }
 }
 
@@ -115,7 +128,9 @@ void AppController::selectPercussion(int soundId)
     m_selectedSound = soundId;
     emit selectionChanged();
     if (m_audioEnabled) {
-        m_audio.play(AudioRenderer::renderPercussion(soundId, 180));
+        if (m_audio->play(AudioRenderer::renderPercussion(soundId, 180))) {
+            m_compositionPlaybackActive = false;
+        }
     }
 }
 
@@ -126,7 +141,9 @@ bool AppController::placePitched(int step, int row)
         return false;
     }
     if (m_audioEnabled) {
-        m_audio.play(AudioRenderer::renderPitched(m_selectedSound, row, 220));
+        if (m_audio->play(AudioRenderer::renderPitched(m_selectedSound, row, 220))) {
+            m_compositionPlaybackActive = false;
+        }
     }
     return save();
 }
@@ -138,7 +155,9 @@ bool AppController::placePercussion(int step)
         return false;
     }
     if (m_audioEnabled) {
-        m_audio.play(AudioRenderer::renderPercussion(m_selectedSound, 180));
+        if (m_audio->play(AudioRenderer::renderPercussion(m_selectedSound, 180))) {
+            m_compositionPlaybackActive = false;
+        }
     }
     return save();
 }
@@ -192,15 +211,17 @@ bool AppController::preserveFailedAutosaveAndStartNew()
 
 void AppController::play()
 {
-    if (m_audioEnabled) {
-        m_audio.play(AudioRenderer::renderComposition(m_composition.toJson(), 112),
-                     m_loopEnabled);
+    if (m_audioEnabled
+        && m_audio->play(AudioRenderer::renderComposition(m_composition.toJson(), 112),
+                         m_loopEnabled)) {
+        m_compositionPlaybackActive = true;
     }
 }
 
 void AppController::stop()
 {
-    m_audio.stop();
+    m_compositionPlaybackActive = false;
+    m_audio->stop();
 }
 
 void AppController::setLoopEnabled(bool enabled)
@@ -209,6 +230,9 @@ void AppController::setLoopEnabled(bool enabled)
         return;
     }
     m_loopEnabled = enabled;
+    if (m_compositionPlaybackActive) {
+        m_audio->setLoopEnabled(enabled);
+    }
     emit loopEnabledChanged();
 }
 

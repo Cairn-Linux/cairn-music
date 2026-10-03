@@ -3,8 +3,61 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <memory>
+
 #include "AppController.h"
+#include "AudioEngine.h"
 #include "CompositionModel.h"
+
+class FakeAudioEngine final : public AudioEngine
+{
+public:
+    FakeAudioEngine()
+        : AudioEngine(false)
+    {
+    }
+
+    [[nodiscard]] bool playing() const noexcept override { return m_fakePlaying; }
+    bool play(const QByteArray &pcm, bool loop) override
+    {
+        if (pcm.isEmpty()) {
+            return false;
+        }
+        ++playCalls;
+        AudioEngine::setLoopEnabled(loop);
+        if (!m_fakePlaying) {
+            m_fakePlaying = true;
+            emit playingChanged();
+        }
+        return true;
+    }
+
+    void stop() override
+    {
+        if (m_fakePlaying) {
+            m_fakePlaying = false;
+            emit playingChanged();
+        }
+    }
+
+    void finishCurrentBuffer() { handleState(QAudio::IdleState); }
+
+    int playCalls = 0;
+    int restartCalls = 0;
+
+protected:
+    bool restartPlayback() override
+    {
+        if (!m_fakePlaying) {
+            return false;
+        }
+        ++restartCalls;
+        return true;
+    }
+
+private:
+    bool m_fakePlaying = false;
+};
 
 class AppControllerTest : public QObject
 {
@@ -14,6 +67,11 @@ private slots:
     void placesSelectedSoundAndReopensAutosave();
     void preservesMalformedAutosaveUntilNewSongIsConfirmed();
     void reportsAutosaveFailureWhileKeepingAcceptedEditsInMemory();
+    void turnsLoopOnDuringPlayback();
+    void turnsLoopOffDuringPlayback();
+    void stopDoesNotRestartLoopingPlayback();
+    void playOnceStopsAtNaturalCompletion();
+    void previewInterruptsCompositionLoopPolicy();
 };
 
 void AppControllerTest::placesSelectedSoundAndReopensAutosave()
@@ -124,6 +182,118 @@ void AppControllerTest::reportsAutosaveFailureWhileKeepingAcceptedEditsInMemory(
     AppController reopened(path, false);
     QCOMPARE(reopened.composition()->measureCount(), 4);
     QCOMPARE(reopened.composition()->rowCount(), 1);
+}
+
+void AppControllerTest::turnsLoopOnDuringPlayback()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    QVERIFY(!controller.loopEnabled());
+    controller.play();
+    QVERIFY(fakeAudio->playing());
+    QVERIFY(!fakeAudio->loopEnabled());
+
+    controller.setLoopEnabled(true);
+    QVERIFY(controller.loopEnabled());
+    QVERIFY(fakeAudio->loopEnabled());
+
+    fakeAudio->finishCurrentBuffer();
+    QVERIFY(fakeAudio->playing());
+    QCOMPARE(fakeAudio->restartCalls, 1);
+}
+
+void AppControllerTest::turnsLoopOffDuringPlayback()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    controller.setLoopEnabled(true);
+    controller.play();
+    QVERIFY(fakeAudio->playing());
+    QVERIFY(fakeAudio->loopEnabled());
+
+    controller.setLoopEnabled(false);
+    QVERIFY(!controller.loopEnabled());
+    QVERIFY(!fakeAudio->loopEnabled());
+
+    fakeAudio->finishCurrentBuffer();
+    QVERIFY(!fakeAudio->playing());
+    QCOMPARE(fakeAudio->restartCalls, 0);
+}
+
+void AppControllerTest::stopDoesNotRestartLoopingPlayback()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    controller.setLoopEnabled(true);
+    controller.play();
+    QCOMPARE(fakeAudio->playCalls, 1);
+    QVERIFY(fakeAudio->playing());
+
+    controller.stop();
+    QVERIFY(!fakeAudio->playing());
+    fakeAudio->finishCurrentBuffer();
+    QVERIFY(!fakeAudio->playing());
+    QCOMPARE(fakeAudio->playCalls, 1);
+    QCOMPARE(fakeAudio->restartCalls, 0);
+}
+
+void AppControllerTest::playOnceStopsAtNaturalCompletion()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    controller.play();
+    QVERIFY(fakeAudio->playing());
+    QVERIFY(!fakeAudio->loopEnabled());
+
+    fakeAudio->finishCurrentBuffer();
+    QVERIFY(!fakeAudio->playing());
+    QCOMPARE(fakeAudio->restartCalls, 0);
+}
+
+void AppControllerTest::previewInterruptsCompositionLoopPolicy()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    controller.setLoopEnabled(true);
+    controller.play();
+    QVERIFY(fakeAudio->loopEnabled());
+
+    controller.selectPitched(2);
+    QVERIFY(fakeAudio->playing());
+    QVERIFY(!fakeAudio->loopEnabled());
+    QCOMPARE(fakeAudio->playCalls, 2);
+
+    controller.setLoopEnabled(false);
+    controller.setLoopEnabled(true);
+    QVERIFY(!fakeAudio->loopEnabled());
+    fakeAudio->finishCurrentBuffer();
+    QVERIFY(!fakeAudio->playing());
+    QCOMPARE(fakeAudio->restartCalls, 0);
 }
 
 QTEST_MAIN(AppControllerTest)

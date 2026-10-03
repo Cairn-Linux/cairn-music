@@ -6,6 +6,8 @@
 #include <QObject>
 #include <QString>
 
+#include <memory>
+
 class AppController final : public QObject
 {
     Q_OBJECT
@@ -22,6 +24,8 @@ class AppController final : public QObject
 public:
     explicit AppController(const QString &autosavePath = {}, bool audioEnabled = true,
                            QObject *parent = nullptr);
+    AppController(const QString &autosavePath, bool audioEnabled,
+                  std::unique_ptr<AudioEngine> audio, QObject *parent = nullptr);
 
     [[nodiscard]] CompositionModel *composition() noexcept;
     [[nodiscard]] QString selectedKind() const;
@@ -57,7 +61,7 @@ private:
     bool ensureRecoveryCopy();
 
     CompositionModel m_composition;
-    AudioEngine m_audio;
+    std::unique_ptr<AudioEngine> m_audio;
     QString m_autosavePath;
     QString m_selectedKind = QStringLiteral("pitched");
     int m_selectedSound = 0;
@@ -65,5 +69,6 @@ private:
     bool m_audioEnabled = true;
     bool m_loadFailed = false;
     bool m_saveFailed = false;
+    bool m_compositionPlaybackActive = false;
     QString m_recoveryPath;
 };

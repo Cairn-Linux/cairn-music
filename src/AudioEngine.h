@@ -6,24 +6,30 @@
 
 #include <memory>
 
-class AudioEngine final : public QObject
+class AudioEngine : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
 
 public:
     explicit AudioEngine(QObject *parent = nullptr);
+    explicit AudioEngine(bool initializeOutput, QObject *parent = nullptr);
+    ~AudioEngine() override = default;
 
-    [[nodiscard]] bool playing() const noexcept;
-    bool play(const QByteArray &pcm, bool loop = false);
-    Q_INVOKABLE void stop();
+    [[nodiscard]] virtual bool playing() const noexcept;
+    [[nodiscard]] virtual bool loopEnabled() const noexcept;
+    virtual bool play(const QByteArray &pcm, bool loop = false);
+    virtual void setLoopEnabled(bool enabled);
+    Q_INVOKABLE virtual void stop();
 
 signals:
     void playingChanged();
 
-private:
+protected:
     void handleState(QAudio::State state);
+    virtual bool restartPlayback();
 
+private:
     QByteArray m_pcm;
     QBuffer m_buffer;
     std::unique_ptr<QAudioSink> m_sink;

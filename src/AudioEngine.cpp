@@ -6,8 +6,17 @@
 #include <QMediaDevices>
 
 AudioEngine::AudioEngine(QObject *parent)
+    : AudioEngine(true, parent)
+{
+}
+
+AudioEngine::AudioEngine(bool initializeOutput, QObject *parent)
     : QObject(parent)
 {
+    if (!initializeOutput) {
+        return;
+    }
+
     QAudioFormat format;
     format.setSampleRate(AudioRenderer::sampleRate);
     format.setChannelCount(2);
@@ -24,6 +33,16 @@ AudioEngine::AudioEngine(QObject *parent)
 bool AudioEngine::playing() const noexcept
 {
     return m_playing;
+}
+
+bool AudioEngine::loopEnabled() const noexcept
+{
+    return m_loop;
+}
+
+void AudioEngine::setLoopEnabled(bool enabled)
+{
+    m_loop = enabled;
 }
 
 bool AudioEngine::play(const QByteArray &pcm, bool loop)
@@ -65,10 +84,17 @@ void AudioEngine::handleState(QAudio::State state)
     if (state != QAudio::IdleState) {
         return;
     }
-    if (m_loop && m_sink && m_buffer.isOpen()) {
-        m_buffer.seek(0);
-        m_sink->start(&m_buffer);
+    if (m_loop && restartPlayback()) {
         return;
     }
     stop();
+}
+
+bool AudioEngine::restartPlayback()
+{
+    if (!m_sink || !m_buffer.isOpen() || !m_buffer.seek(0)) {
+        return false;
+    }
+    m_sink->start(&m_buffer);
+    return true;
 }

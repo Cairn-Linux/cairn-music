@@ -2,6 +2,7 @@
 #include <QtTest/qtestaccessible.h>
 #include <QAccessible>
 #include <QFile>
+#include <QFileInfo>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -51,6 +52,41 @@ bool clickQuickItem(QObject *root, const QString &objectName)
     QCoreApplication::processEvents();
     return true;
 }
+
+class QmlAudioEngine final : public AudioEngine
+{
+public:
+    QmlAudioEngine()
+        : AudioEngine(false)
+    {
+    }
+
+protected:
+    [[nodiscard]] bool outputAvailable() const noexcept override { return true; }
+    [[nodiscard]] QAudio::Error outputError() const noexcept override
+    {
+        return m_outputError;
+    }
+    [[nodiscard]] QAudio::State outputState() const noexcept override
+    {
+        return m_outputState;
+    }
+    void startOutput(QIODevice *) override
+    {
+        m_outputError = QAudio::NoError;
+        m_outputState = QAudio::ActiveState;
+    }
+    void stopOutput() override
+    {
+        m_outputError = QAudio::NoError;
+        m_outputState = QAudio::StoppedState;
+        handleState(m_outputState);
+    }
+
+private:
+    QAudio::Error m_outputError = QAudio::NoError;
+    QAudio::State m_outputState = QAudio::StoppedState;
+};
 }
 
 class QmlSmokeTest : public QObject
@@ -61,6 +97,13 @@ private slots:
     void loadsPicturesWorkspace();
     void showsAutosaveFailureWarning();
     void showsRecoverableAudioFailureWarning();
+    void selectsEverySoundThroughPointerPath();
+    void placesPercussionThroughSeparateLane();
+    void erasesAndUndoesMultiplePointerEdits();
+    void addsMeasuresThroughPrototypeLimit();
+    void controlsPlayStopAndLoopThroughQml();
+    void reopensPointerEditsFromTemporaryAutosave();
+    void exposesKeyboardFocusAndAccessibleControlNames();
     void clicksPitchedPlacementPaths();
     void handlesPitchedPlacementFeedback();
 };
@@ -181,6 +224,295 @@ void QmlSmokeTest::showsRecoverableAudioFailureWarning()
     qDeleteAll(QTestAccessibility::events());
     QTestAccessibility::clearEvents();
     QTestAccessibility::cleanup();
+}
+
+void QmlSmokeTest::selectsEverySoundThroughPointerPath()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+
+    for (int sound = 0; sound < 4; ++sound) {
+        const QString objectName = QStringLiteral("pitchedSoundButton-%1").arg(sound);
+        QQuickItem *button = findQuickItem(window->contentItem(), objectName);
+        QVERIFY2(button != nullptr, qPrintable(objectName));
+        QVERIFY(clickQuickItem(root, objectName));
+        QCOMPARE(controller.selectedKind(), QStringLiteral("pitched"));
+        QCOMPARE(controller.selectedSound(), sound);
+        for (int candidate = 0; candidate < 4; ++candidate) {
+            QQuickItem *candidateButton = findQuickItem(
+                window->contentItem(),
+                QStringLiteral("pitchedSoundButton-%1").arg(candidate));
+            QVERIFY(candidateButton != nullptr);
+            QCOMPARE(candidateButton->property("checked").toBool(), candidate == sound);
+        }
+        for (int candidate = 0; candidate < 2; ++candidate) {
+            QQuickItem *candidateButton = findQuickItem(
+                window->contentItem(),
+                QStringLiteral("percussionSoundButton-%1").arg(candidate));
+            QVERIFY(candidateButton != nullptr);
+            QVERIFY(!candidateButton->property("checked").toBool());
+        }
+    }
+
+    for (int sound = 0; sound < 2; ++sound) {
+        const QString objectName = QStringLiteral("percussionSoundButton-%1").arg(sound);
+        QQuickItem *button = findQuickItem(window->contentItem(), objectName);
+        QVERIFY2(button != nullptr, qPrintable(objectName));
+        QVERIFY(clickQuickItem(root, objectName));
+        QCOMPARE(controller.selectedKind(), QStringLiteral("percussion"));
+        QCOMPARE(controller.selectedSound(), sound);
+        for (int candidate = 0; candidate < 4; ++candidate) {
+            QQuickItem *candidateButton = findQuickItem(
+                window->contentItem(),
+                QStringLiteral("pitchedSoundButton-%1").arg(candidate));
+            QVERIFY(candidateButton != nullptr);
+            QVERIFY(!candidateButton->property("checked").toBool());
+        }
+        for (int candidate = 0; candidate < 2; ++candidate) {
+            QQuickItem *candidateButton = findQuickItem(
+                window->contentItem(),
+                QStringLiteral("percussionSoundButton-%1").arg(candidate));
+            QVERIFY(candidateButton != nullptr);
+            QCOMPARE(candidateButton->property("checked").toBool(), candidate == sound);
+        }
+    }
+}
+
+void QmlSmokeTest::placesPercussionThroughSeparateLane()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+    window->resize(window->width(), 1000);
+    QCoreApplication::processEvents();
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("percussionSoundButton-1")));
+    QVERIFY(clickQuickItem(root, QStringLiteral("drumCellMouse-0-0")));
+    QCOMPARE(controller.composition()->rowCount(), 0);
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("drumCellMouse-0-1")));
+    QCOMPARE(controller.composition()->rowCount(), 1);
+    const QModelIndex token = controller.composition()->index(0);
+    QCOMPARE(controller.composition()->data(token, CompositionModel::KindRole).toString(),
+             QStringLiteral("percussion"));
+    QCOMPARE(controller.composition()->data(token, CompositionModel::StepRole).toInt(), 0);
+    QCOMPARE(controller.composition()->data(token, CompositionModel::PitchRowRole).toInt(), 1);
+    QCOMPARE(controller.composition()->data(token, CompositionModel::SoundIdRole).toInt(), 1);
+}
+
+void QmlSmokeTest::erasesAndUndoesMultiplePointerEdits()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("pitchCellMouse-0-0")));
+    QVERIFY(clickQuickItem(root, QStringLiteral("pitchCellMouse-1-1")));
+    QCOMPARE(controller.composition()->rowCount(), 2);
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("eraserButton")));
+    QVERIFY(root->property("eraseMode").toBool());
+    QVERIFY(clickQuickItem(root, QStringLiteral("pitchedTokenMouse-1-1")));
+    QCOMPARE(controller.composition()->rowCount(), 1);
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("undoButton")));
+    QCOMPARE(controller.composition()->rowCount(), 2);
+    QVERIFY(clickQuickItem(root, QStringLiteral("undoButton")));
+    QCOMPARE(controller.composition()->rowCount(), 1);
+    const QModelIndex remaining = controller.composition()->index(0);
+    QCOMPARE(controller.composition()->data(
+                 remaining, CompositionModel::StepRole).toInt(), 0);
+    QCOMPARE(controller.composition()->data(
+                 remaining, CompositionModel::PitchRowRole).toInt(), 0);
+}
+
+void QmlSmokeTest::addsMeasuresThroughPrototypeLimit()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+    QQuickItem *button = findQuickItem(window->contentItem(), QStringLiteral("addMeasureButton"));
+    QVERIFY(button != nullptr);
+
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    for (int expected = 3; expected <= 8; ++expected) {
+        QVERIFY(clickQuickItem(root, QStringLiteral("addMeasureButton")));
+        QCOMPARE(controller.composition()->measureCount(), expected);
+    }
+    QVERIFY(!button->property("enabled").toBool());
+    QVERIFY(clickQuickItem(root, QStringLiteral("addMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 8);
+}
+
+void QmlSmokeTest::controlsPlayStopAndLoopThroughQml()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+
+    QVERIFY(!controller.loopEnabled());
+    QVERIFY(clickQuickItem(root, QStringLiteral("loopCheckBox")));
+    QVERIFY(controller.loopEnabled());
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("playButton")));
+    QVERIFY(controller.playing());
+    QVERIFY(fakeAudio->loopEnabled());
+    QObject *playButton = root->findChild<QObject *>("playButton");
+    QVERIFY(playButton != nullptr);
+    QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Stop")));
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("loopCheckBox")));
+    QVERIFY(!controller.loopEnabled());
+    QVERIFY(!fakeAudio->loopEnabled());
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("playButton")));
+    QVERIFY(!controller.playing());
+    QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Play")));
+}
+
+void QmlSmokeTest::reopensPointerEditsFromTemporaryAutosave()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString autosavePath = directory.filePath("autosave.json");
+
+    {
+        AppController controller(autosavePath, false);
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        QObject *root = engine.rootObjects().constFirst();
+
+        QVERIFY(clickQuickItem(root, QStringLiteral("pitchedSoundButton-2")));
+        QVERIFY(clickQuickItem(root, QStringLiteral("pitchCellMouse-2-4")));
+        QVERIFY(clickQuickItem(root, QStringLiteral("addMeasureButton")));
+        QCOMPARE(controller.composition()->rowCount(), 1);
+        QCOMPARE(controller.composition()->measureCount(), 3);
+    }
+
+    QVERIFY(QFileInfo::exists(autosavePath));
+    AppController reopened(autosavePath, false);
+    QCOMPARE(reopened.composition()->rowCount(), 1);
+    QCOMPARE(reopened.composition()->measureCount(), 3);
+    const QModelIndex token = reopened.composition()->index(0);
+    QCOMPARE(reopened.composition()->data(token, CompositionModel::StepRole).toInt(), 2);
+    QCOMPARE(reopened.composition()->data(token, CompositionModel::PitchRowRole).toInt(), 4);
+    QCOMPARE(reopened.composition()->data(token, CompositionModel::SoundIdRole).toInt(), 2);
+
+    QQmlApplicationEngine reopenedEngine;
+    reopenedEngine.rootContext()->setContextProperty("app", &reopened);
+    reopenedEngine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(reopenedEngine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(reopenedEngine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QVERIFY(findQuickItem(window->contentItem(),
+                          QStringLiteral("pitchedTokenMouse-2-4")) != nullptr);
+}
+
+void QmlSmokeTest::exposesKeyboardFocusAndAccessibleControlNames()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+
+    struct ControlExpectation {
+        QString objectName;
+        QString accessibleName;
+        QAccessible::Role role;
+    };
+    const QList<ControlExpectation> controls = {
+        {QStringLiteral("undoButton"), QStringLiteral("Undo last change"),
+         QAccessible::Button},
+        {QStringLiteral("eraserButton"), QStringLiteral("Eraser tool"),
+         QAccessible::CheckBox},
+        {QStringLiteral("playButton"), QStringLiteral("Play song"),
+         QAccessible::Button},
+        {QStringLiteral("loopCheckBox"), QStringLiteral("Loop whole song"),
+         QAccessible::CheckBox},
+        {QStringLiteral("addMeasureButton"), QStringLiteral("Add one measure"),
+         QAccessible::Button},
+        {QStringLiteral("pitchedSoundButton-0"), QStringLiteral("Keys"),
+         QAccessible::CheckBox},
+        {QStringLiteral("pitchedSoundButton-1"), QStringLiteral("Bell"),
+         QAccessible::CheckBox},
+        {QStringLiteral("pitchedSoundButton-2"), QStringLiteral("Bird"),
+         QAccessible::CheckBox},
+        {QStringLiteral("pitchedSoundButton-3"), QStringLiteral("Bubble"),
+         QAccessible::CheckBox},
+        {QStringLiteral("percussionSoundButton-0"), QStringLiteral("Thump"),
+         QAccessible::CheckBox},
+        {QStringLiteral("percussionSoundButton-1"), QStringLiteral("Clap"),
+         QAccessible::CheckBox},
+    };
+
+    for (const ControlExpectation &expectation : controls) {
+        QQuickItem *control = findQuickItem(window->contentItem(), expectation.objectName);
+        QVERIFY2(control != nullptr, qPrintable(expectation.objectName));
+        QVERIFY2(control->property("activeFocusOnTab").toBool(),
+                 qPrintable(expectation.objectName));
+        QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(control);
+        QVERIFY2(accessible != nullptr, qPrintable(expectation.objectName));
+        QCOMPARE(accessible->text(QAccessible::Name), expectation.accessibleName);
+        QCOMPARE(accessible->role(), expectation.role);
+    }
+
+    QQuickItem *bubbleButton = findQuickItem(
+        window->contentItem(), QStringLiteral("pitchedSoundButton-3"));
+    QVERIFY(bubbleButton != nullptr);
+    bubbleButton->forceActiveFocus(Qt::TabFocusReason);
+    QVERIFY(bubbleButton->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Space);
+    QCoreApplication::processEvents();
+    QCOMPARE(controller.selectedKind(), QStringLiteral("pitched"));
+    QCOMPARE(controller.selectedSound(), 3);
 }
 
 void QmlSmokeTest::clicksPitchedPlacementPaths()

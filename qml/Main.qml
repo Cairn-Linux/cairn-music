@@ -25,6 +25,26 @@ ApplicationWindow {
     property var drumColors: ["#ff5d8f", "#57c7ff"]
     property var drumMarks: ["●", "✦"]
     property var drumNames: [qsTr("Thump"), qsTr("Clap")]
+    property bool placementFeedbackVisible: false
+    readonly property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
+
+    function placePitchedAt(step, pitch) {
+        const placed = app.placePitched(step, pitch)
+        if (placed || !app.pitchedPlacementRejected) {
+            placementFeedbackVisible = false
+        } else {
+            placementFeedbackVisible = true
+            placementFeedbackTimer.restart()
+        }
+        return placed
+    }
+
+    Timer {
+        id: placementFeedbackTimer
+        interval: 2200
+        repeat: false
+        onTriggered: root.placementFeedbackVisible = false
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -140,6 +160,34 @@ ApplicationWindow {
                 width: parent.width - 32
                 text: app.audioFailureMessage
                 color: "#123e52"
+                font.pixelSize: 17
+                font.bold: true
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+            }
+        }
+
+        Rectangle {
+            objectName: "placementFeedback"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 54
+            visible: root.placementFeedbackVisible
+            radius: 14
+            color: "#efe5ff"
+            border.color: "#8b65b3"
+            border.width: 2
+            Accessible.name: root.placementFeedbackMessage
+            Accessible.role: Accessible.AlertMessage
+            onVisibleChanged: {
+                if (visible)
+                    Accessible.announce(root.placementFeedbackMessage, Accessible.Polite)
+            }
+
+            Label {
+                anchors.centerIn: parent
+                width: parent.width - 32
+                text: root.placementFeedbackMessage
+                color: "#3a2948"
                 font.pixelSize: 17
                 font.bold: true
                 wrapMode: Text.WordWrap
@@ -371,13 +419,15 @@ ApplicationWindow {
                                         }
 
                                         MouseArea {
+                                            objectName: "pitchCellMouse-%1-%2"
+                                                .arg(parent.stepIndex).arg(parent.pitch)
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
                                                 if (root.eraseMode)
                                                     app.eraseAt("pitched", parent.stepIndex, parent.pitch)
                                                 else if (app.selectedKind === "pitched")
-                                                    app.placePitched(parent.stepIndex, parent.pitch)
+                                                    root.placePitchedAt(parent.stepIndex, parent.pitch)
                                             }
                                         }
                                     }
@@ -480,13 +530,17 @@ ApplicationWindow {
                                     }
 
                                     MouseArea {
+                                        objectName: parent.pitched
+                                            ? "pitchedTokenMouse-%1-%2"
+                                                  .arg(parent.step).arg(parent.pitchRow)
+                                            : ""
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: {
                                             if (root.eraseMode)
                                                 app.eraseAt(parent.kind, parent.step, parent.pitchRow)
                                             else if (parent.pitched && app.selectedKind === "pitched")
-                                                app.placePitched(parent.step, parent.pitchRow)
+                                                root.placePitchedAt(parent.step, parent.pitchRow)
                                             else if (!parent.pitched && app.selectedKind === "percussion"
                                                      && app.selectedSound === parent.pitchRow)
                                                 app.placePercussion(parent.step)

@@ -116,6 +116,20 @@ QString AppController::audioFailureMessage() const
     return audioFailed() ? tr("Sound stopped. You can try Play again.") : QString{};
 }
 
+bool AppController::pitchedPlacementRejected() const noexcept
+{
+    return m_pitchedPlacementRejected;
+}
+
+void AppController::setPitchedPlacementRejected(bool rejected)
+{
+    if (m_pitchedPlacementRejected == rejected) {
+        return;
+    }
+    m_pitchedPlacementRejected = rejected;
+    emit pitchedPlacementRejectedChanged();
+}
+
 void AppController::selectPitched(int soundId)
 {
     if (soundId < 0 || soundId >= 4) {
@@ -148,8 +162,14 @@ void AppController::selectPercussion(int soundId)
 
 bool AppController::placePitched(int step, int row)
 {
+    setPitchedPlacementRejected(false);
     if (m_loadFailed || m_selectedKind != QStringLiteral("pitched")
-        || !m_composition.placePitched(step, row, m_selectedSound)) {
+        || step < 0 || step >= m_composition.measureCount() * m_composition.stepsPerMeasure()
+        || row < 0 || row >= 7) {
+        return false;
+    }
+    if (!m_composition.placePitched(step, row, m_selectedSound)) {
+        setPitchedPlacementRejected(true);
         return false;
     }
     if (m_audioEnabled) {

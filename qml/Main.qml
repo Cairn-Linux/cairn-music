@@ -83,6 +83,7 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
 
             ToolButton {
+                objectName: "undoButton"
                 text: qsTr("↶  Undo")
                 enabled: app.composition.canUndo
                 font.pixelSize: 16
@@ -91,6 +92,7 @@ ApplicationWindow {
             }
             ToolButton {
                 id: eraserButton
+                objectName: "eraserButton"
                 text: root.eraseMode ? qsTr("✓  Eraser") : qsTr("✕  Eraser")
                 checkable: true
                 checked: root.eraseMode
@@ -108,6 +110,7 @@ ApplicationWindow {
                 Accessible.name: app.playing ? qsTr("Stop song") : qsTr("Play song")
             }
             CheckBox {
+                objectName: "loopCheckBox"
                 text: qsTr("Loop")
                 font.pixelSize: 15
                 checked: app.loopEnabled
@@ -225,6 +228,7 @@ ApplicationWindow {
                         model: 4
                         delegate: Button {
                             required property int index
+                            objectName: "pitchedSoundButton-%1".arg(index)
                             Layout.fillWidth: true
                             Layout.preferredHeight: 68
                             checkable: true
@@ -280,6 +284,7 @@ ApplicationWindow {
                         model: 2
                         delegate: Button {
                             required property int index
+                            objectName: "percussionSoundButton-%1".arg(index)
                             Layout.fillWidth: true
                             Layout.preferredHeight: 58
                             checkable: true
@@ -350,6 +355,7 @@ ApplicationWindow {
                         }
                         Item { Layout.fillWidth: true }
                         Button {
+                            objectName: "addMeasureButton"
                             text: qsTr("＋  Add measure")
                             enabled: app.composition.measureCount < 8
                             onClicked: app.addMeasure()
@@ -477,6 +483,8 @@ ApplicationWindow {
                                         }
 
                                         MouseArea {
+                                            objectName: "drumCellMouse-%1-%2"
+                                                .arg(parent.stepIndex).arg(parent.drumRow)
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {

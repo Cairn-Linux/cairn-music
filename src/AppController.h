@@ -22,6 +22,8 @@ class AppController final : public QObject
     Q_PROPERTY(QString saveFailureMessage READ saveFailureMessage NOTIFY saveFailedChanged)
     Q_PROPERTY(bool audioFailed READ audioFailed NOTIFY audioFailedChanged)
     Q_PROPERTY(QString audioFailureMessage READ audioFailureMessage NOTIFY audioFailedChanged)
+    Q_PROPERTY(bool pitchedPlacementRejected READ pitchedPlacementRejected
+               NOTIFY pitchedPlacementRejectedChanged)
 
 public:
     explicit AppController(const QString &autosavePath = {}, bool audioEnabled = true,
@@ -40,6 +42,7 @@ public:
     [[nodiscard]] QString saveFailureMessage() const;
     [[nodiscard]] bool audioFailed() const noexcept;
     [[nodiscard]] QString audioFailureMessage() const;
+    [[nodiscard]] bool pitchedPlacementRejected() const noexcept;
 
     Q_INVOKABLE void selectPitched(int soundId);
     Q_INVOKABLE void selectPercussion(int soundId);
@@ -60,10 +63,12 @@ signals:
     void loadFailedChanged();
     void saveFailedChanged();
     void audioFailedChanged();
+    void pitchedPlacementRejectedChanged();
 
 private:
     bool save();
     bool ensureRecoveryCopy();
+    void setPitchedPlacementRejected(bool rejected);
 
     CompositionModel m_composition;
     std::unique_ptr<AudioEngine> m_audio;
@@ -74,6 +79,7 @@ private:
     bool m_audioEnabled = true;
     bool m_loadFailed = false;
     bool m_saveFailed = false;
+    bool m_pitchedPlacementRejected = false;
     bool m_compositionPlaybackActive = false;
     QString m_recoveryPath;
 };

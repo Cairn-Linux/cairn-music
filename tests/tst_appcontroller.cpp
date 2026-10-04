@@ -98,6 +98,7 @@ private slots:
     void placesSelectedSoundAndReopensAutosave();
     void preservesMalformedAutosaveUntilNewSongIsConfirmed();
     void reportsAutosaveFailureWhileKeepingAcceptedEditsInMemory();
+    void distinguishesPolyphonyRejectionFromSaveFailure();
     void turnsLoopOnDuringPlayback();
     void turnsLoopOffDuringPlayback();
     void stopDoesNotRestartLoopingPlayback();
@@ -217,6 +218,35 @@ void AppControllerTest::reportsAutosaveFailureWhileKeepingAcceptedEditsInMemory(
     AppController reopened(path, false);
     QCOMPARE(reopened.composition()->measureCount(), 4);
     QCOMPARE(reopened.composition()->rowCount(), 1);
+}
+
+void AppControllerTest::distinguishesPolyphonyRejectionFromSaveFailure()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString blockedParent = directory.filePath("blocked");
+    QFile blocker(blockedParent);
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    QVERIFY(blocker.write("not a directory") > 0);
+    blocker.close();
+
+    AppController controller(blockedParent + QStringLiteral("/autosave.json"), false);
+    controller.selectPitched(0);
+
+    for (int pitch = 0; pitch < 3; ++pitch) {
+        QVERIFY(!controller.placePitched(0, pitch));
+        QVERIFY(controller.saveFailed());
+        QVERIFY(!controller.pitchedPlacementRejected());
+    }
+    QCOMPARE(controller.composition()->rowCount(), 3);
+
+    QVERIFY(!controller.placePitched(0, 3));
+    QVERIFY(controller.pitchedPlacementRejected());
+    QCOMPARE(controller.composition()->rowCount(), 3);
+
+    QVERIFY(!controller.placePitched(0, 1));
+    QVERIFY(!controller.pitchedPlacementRejected());
+    QCOMPARE(controller.composition()->rowCount(), 3);
 }
 
 void AppControllerTest::turnsLoopOnDuringPlayback()

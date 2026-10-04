@@ -10,6 +10,8 @@ private slots:
     void rendersFourDistinctPitchedSounds();
     void rendersTwoDistinctPercussionSounds();
     void rendersCompositionAtTheStoredStep();
+    void equivalentVoiceOrderProducesIdenticalPcm();
+    void rendersMaximumLengthFinalStepSafely();
 };
 
 void AudioRendererTest::rendersFourDistinctPitchedSounds()
@@ -58,6 +60,62 @@ void AudioRendererTest::rendersCompositionAtTheStoredStep()
     QVERIFY(std::all_of(pcm.cbegin(), pcm.cbegin() + firstBeatBytes,
                         [](char value) { return value == 0; }));
     QVERIFY(std::any_of(pcm.cbegin() + firstBeatBytes, pcm.cend(),
+                        [](char value) { return value != 0; }));
+}
+
+void AudioRendererTest::equivalentVoiceOrderProducesIdenticalPcm()
+{
+    const QList<QJsonObject> voices{
+        QJsonObject{{"id", "pitch-low"}, {"kind", "pitched"}, {"step", 0},
+                    {"row", 0}, {"sound", 0}},
+        QJsonObject{{"id", "pitch-mid"}, {"kind", "pitched"}, {"step", 0},
+                    {"row", 3}, {"sound", 1}},
+        QJsonObject{{"id", "pitch-high"}, {"kind", "pitched"}, {"step", 0},
+                    {"row", 6}, {"sound", 2}},
+        QJsonObject{{"id", "drum-thump"}, {"kind", "percussion"}, {"step", 0},
+                    {"row", -1}, {"sound", 0}},
+        QJsonObject{{"id", "drum-clap"}, {"kind", "percussion"}, {"step", 0},
+                    {"row", -1}, {"sound", 1}},
+    };
+    QJsonArray forward;
+    QJsonArray reversed;
+    for (const QJsonObject &voice : voices) {
+        forward.append(voice);
+        reversed.prepend(voice);
+    }
+
+    const QJsonObject forwardProject{{"version", 1}, {"measures", 2},
+                                     {"tokens", forward}};
+    const QJsonObject reversedProject{{"version", 1}, {"measures", 2},
+                                      {"tokens", reversed}};
+
+    const QByteArray forwardPcm = AudioRenderer::renderComposition(forwardProject, 120);
+    const QByteArray reversedPcm = AudioRenderer::renderComposition(reversedProject, 120);
+    QVERIFY(!forwardPcm.isEmpty());
+    QCOMPARE(forwardPcm, reversedPcm);
+}
+
+void AudioRendererTest::rendersMaximumLengthFinalStepSafely()
+{
+    const QJsonObject project{
+        {"version", 1},
+        {"measures", 8},
+        {"tokens", QJsonArray{QJsonObject{{"id", "last"},
+                                          {"kind", "pitched"},
+                                          {"step", 31},
+                                          {"row", 3},
+                                          {"sound", 0}}}},
+    };
+
+    const QByteArray pcm = AudioRenderer::renderComposition(project, 40);
+    const qsizetype beatFrames = qsizetype(AudioRenderer::sampleRate) * 1500 / 1000;
+    const qsizetype expectedFrames = beatFrames * 8 * 4;
+    QCOMPARE(pcm.size(), expectedFrames * qsizetype(sizeof(qint16) * 2));
+
+    const qsizetype finalStepByte = beatFrames * 31 * qsizetype(sizeof(qint16) * 2);
+    QVERIFY(std::all_of(pcm.cbegin(), pcm.cbegin() + finalStepByte,
+                        [](char value) { return value == 0; }));
+    QVERIFY(std::any_of(pcm.cbegin() + finalStepByte, pcm.cend(),
                         [](char value) { return value != 0; }));
 }
 

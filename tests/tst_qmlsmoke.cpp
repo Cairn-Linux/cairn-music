@@ -133,6 +133,7 @@ private slots:
     void keepsAddMeasureUsableAtMinimumSize();
     void showsCurrentPlaybackStepAndSoundingEvents();
     void makesLoopRestartVisibleAndAnnouncesIt();
+    void clearsLoopRestartNoticeWhenLoopIsToggled();
     void clearsLoopRestartNoticeForStopAndReplay();
     void clearsLoopRestartNoticeForSoundPreview();
     void playheadMovesWithScrollableTimeline();
@@ -827,6 +828,53 @@ void QmlSmokeTest::makesLoopRestartVisibleAndAnnouncesIt()
     qDeleteAll(QTestAccessibility::events());
     QTestAccessibility::clearEvents();
     QTestAccessibility::cleanup();
+}
+
+void QmlSmokeTest::clearsLoopRestartNoticeWhenLoopIsToggled()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QVERIFY(restartBadge != nullptr);
+    QObject *restartTimer = nullptr;
+    for (QObject *candidate : root->findChildren<QObject *>()) {
+        const QVariant interval = candidate->property("interval");
+        if (interval.isValid() && interval.toInt() == 1600) {
+            restartTimer = candidate;
+            break;
+        }
+    }
+    QVERIFY(restartTimer != nullptr);
+
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(restartBadge->property("visible").toBool());
+    QVERIFY(restartTimer->property("running").toBool());
+
+    controller.setLoopEnabled(false);
+    QCoreApplication::processEvents();
+    QVERIFY(controller.playing());
+    QVERIFY(!restartTimer->property("running").toBool());
+    QVERIFY(!restartBadge->property("visible").toBool());
+
+    controller.setLoopEnabled(true);
+    QCoreApplication::processEvents();
+    QVERIFY(controller.playing());
+    QVERIFY(!restartBadge->property("visible").toBool());
+
+    QTest::qWait(1700);
+    QVERIFY(!restartBadge->property("visible").toBool());
 }
 
 void QmlSmokeTest::clearsLoopRestartNoticeForStopAndReplay()

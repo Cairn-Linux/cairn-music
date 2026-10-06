@@ -384,6 +384,12 @@ ApplicationWindow {
                                     root.loopRestartNoticeVisible = false
                                     loopRestartNoticeTimer.stop()
                                 }
+                                function onLoopEnabledChanged() {
+                                    if (!app.loopEnabled) {
+                                        root.loopRestartNoticeVisible = false
+                                        loopRestartNoticeTimer.stop()
+                                    }
+                                }
                                 function onPlaybackProgressChanged() {
                                     if (app.playbackStep < 0) {
                                         root.loopRestartNoticeVisible = false

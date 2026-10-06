@@ -380,6 +380,10 @@ ApplicationWindow {
 
                             Connections {
                                 target: app
+                                function onPlayingChanged() {
+                                    root.loopRestartNoticeVisible = false
+                                    loopRestartNoticeTimer.stop()
+                                }
                                 function onLoopRestarted() {
                                     root.loopRestartNoticeVisible = true
                                     loopRestartNoticeTimer.restart()

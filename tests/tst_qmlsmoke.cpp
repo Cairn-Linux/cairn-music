@@ -133,6 +133,7 @@ private slots:
     void keepsAddMeasureUsableAtMinimumSize();
     void showsCurrentPlaybackStepAndSoundingEvents();
     void makesLoopRestartVisibleAndAnnouncesIt();
+    void clearsLoopRestartNoticeForStopAndReplay();
     void playheadMovesWithScrollableTimeline();
 };
 
@@ -825,6 +826,35 @@ void QmlSmokeTest::makesLoopRestartVisibleAndAnnouncesIt()
     qDeleteAll(QTestAccessibility::events());
     QTestAccessibility::clearEvents();
     QTestAccessibility::cleanup();
+}
+
+void QmlSmokeTest::clearsLoopRestartNoticeForStopAndReplay()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QVERIFY(restartBadge != nullptr);
+
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(restartBadge->property("visible").toBool());
+
+    controller.stop();
+    controller.play();
+    QCoreApplication::processEvents();
+
+    QVERIFY(!restartBadge->property("visible").toBool());
 }
 
 void QmlSmokeTest::playheadMovesWithScrollableTimeline()

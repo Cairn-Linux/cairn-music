@@ -26,6 +26,7 @@ public:
 
 signals:
     void playingChanged();
+    void loopRestarted();
     void errorChanged();
 
 protected:

@@ -108,6 +108,8 @@ private slots:
     void idleUnderrunStopsInsteadOfRestartingLoop();
     void failedLoopRestartBecomesRecoverableError();
     void repeatedPlayStopCyclesStayConsistent();
+    void exposesPlaybackStepAndSemanticStatus();
+    void reportsLoopRestart();
 };
 
 void AppControllerTest::placesSelectedSoundAndReopensAutosave()
@@ -462,6 +464,50 @@ void AppControllerTest::repeatedPlayStopCyclesStayConsistent()
     QCOMPARE(fakeAudio->startCalls, 10);
     QVERIFY(fakeAudio->resourcesReleased());
     QCOMPARE(playingChanged.count(), 20);
+}
+
+void AppControllerTest::exposesPlaybackStepAndSemanticStatus()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    QCOMPARE(controller.playbackStep(), -1);
+    QVERIFY(controller.playbackStatus().isEmpty());
+
+    controller.play();
+    QCOMPARE(controller.playbackStep(), 0);
+    QCOMPARE(controller.playbackCycle(), 0);
+    QCOMPARE(controller.playbackStatus(), QStringLiteral("Playing beat 1 of 8."));
+
+    QTRY_COMPARE_WITH_TIMEOUT(controller.playbackStep(), 1, 900);
+    QCOMPARE(controller.playbackStatus(), QStringLiteral("Playing beat 2 of 8."));
+
+    controller.stop();
+    QCOMPARE(controller.playbackStep(), -1);
+    QVERIFY(controller.playbackStatus().isEmpty());
+}
+
+void AppControllerTest::reportsLoopRestart()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.setLoopEnabled(true);
+    QSignalSpy restarted(&controller, &AppController::loopRestarted);
+
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+
+    QCOMPARE(controller.playbackStep(), 0);
+    QCOMPARE(controller.playbackCycle(), 1);
+    QCOMPARE(controller.playbackStatus(), QStringLiteral("Loop 2, beat 1 of 8."));
+    QCOMPARE(restarted.count(), 1);
 }
 
 QTEST_MAIN(AppControllerTest)

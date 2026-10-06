@@ -3,8 +3,10 @@
 #include "AudioEngine.h"
 #include "CompositionModel.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 
 #include <memory>
 
@@ -16,6 +18,9 @@ class AppController final : public QObject
     Q_PROPERTY(int selectedSound READ selectedSound NOTIFY selectionChanged)
     Q_PROPERTY(bool loopEnabled READ loopEnabled WRITE setLoopEnabled NOTIFY loopEnabledChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
+    Q_PROPERTY(int playbackStep READ playbackStep NOTIFY playbackProgressChanged)
+    Q_PROPERTY(int playbackCycle READ playbackCycle NOTIFY playbackProgressChanged)
+    Q_PROPERTY(QString playbackStatus READ playbackStatus NOTIFY playbackProgressChanged)
     Q_PROPERTY(bool loadFailed READ loadFailed NOTIFY loadFailedChanged)
     Q_PROPERTY(QString loadFailureMessage READ loadFailureMessage NOTIFY loadFailedChanged)
     Q_PROPERTY(bool saveFailed READ saveFailed NOTIFY saveFailedChanged)
@@ -36,6 +41,9 @@ public:
     [[nodiscard]] int selectedSound() const noexcept;
     [[nodiscard]] bool loopEnabled() const noexcept;
     [[nodiscard]] bool playing() const noexcept;
+    [[nodiscard]] int playbackStep() const noexcept;
+    [[nodiscard]] int playbackCycle() const noexcept;
+    [[nodiscard]] QString playbackStatus() const;
     [[nodiscard]] bool loadFailed() const noexcept;
     [[nodiscard]] QString loadFailureMessage() const;
     [[nodiscard]] bool saveFailed() const noexcept;
@@ -60,6 +68,8 @@ signals:
     void selectionChanged();
     void loopEnabledChanged();
     void playingChanged();
+    void playbackProgressChanged();
+    void loopRestarted();
     void loadFailedChanged();
     void saveFailedChanged();
     void audioFailedChanged();
@@ -69,6 +79,9 @@ private:
     bool save();
     bool ensureRecoveryCopy();
     void setPitchedPlacementRejected(bool rejected);
+    void startPlaybackProgress();
+    void resetPlaybackProgress();
+    void refreshPlaybackProgress();
 
     CompositionModel m_composition;
     std::unique_ptr<AudioEngine> m_audio;
@@ -81,5 +94,9 @@ private:
     bool m_saveFailed = false;
     bool m_pitchedPlacementRejected = false;
     bool m_compositionPlaybackActive = false;
+    int m_playbackStep = -1;
+    int m_playbackCycle = 0;
+    QElapsedTimer m_playbackElapsed;
+    QTimer m_playbackTimer;
     QString m_recoveryPath;
 };

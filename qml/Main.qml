@@ -26,6 +26,7 @@ ApplicationWindow {
     property var drumMarks: ["●", "✦"]
     property var drumNames: [qsTr("Thump"), qsTr("Clap")]
     property bool placementFeedbackVisible: false
+    property bool loopRestartNoticeVisible: false
     readonly property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
 
     function placePitchedAt(step, pitch) {
@@ -44,6 +45,13 @@ ApplicationWindow {
         interval: 2200
         repeat: false
         onTriggered: root.placementFeedbackVisible = false
+    }
+
+    Timer {
+        id: loopRestartNoticeTimer
+        interval: 1600
+        repeat: false
+        onTriggered: root.loopRestartNoticeVisible = false
     }
 
     Rectangle {
@@ -359,6 +367,38 @@ ApplicationWindow {
                             color: "#7b668d"
                             font.pixelSize: 14
                         }
+                        Label {
+                            id: playbackStatus
+                            objectName: "playbackStatus"
+                            visible: app.playing && text.length > 0
+                            text: app.playbackStatus
+                            color: "#5b3e73"
+                            font.pixelSize: 14
+                            font.bold: true
+                            Accessible.name: text
+                            Accessible.role: Accessible.StaticText
+
+                            Connections {
+                                target: app
+                                function onLoopRestarted() {
+                                    root.loopRestartNoticeVisible = true
+                                    loopRestartNoticeTimer.restart()
+                                    playbackStatus.Accessible.announce(
+                                        app.playbackStatus, Accessible.Polite)
+                                }
+                            }
+                        }
+                        Label {
+                            id: loopRestartBadge
+                            objectName: "loopRestartBadge"
+                            visible: app.playing && root.loopRestartNoticeVisible
+                            text: qsTr("Loop %1 • back to beat 1").arg(app.playbackCycle + 1)
+                            color: "#3d2452"
+                            font.pixelSize: 14
+                            font.bold: true
+                            Accessible.name: text
+                            Accessible.role: Accessible.StaticText
+                        }
                         Item { Layout.fillWidth: true }
                         Button {
                             objectName: "addMeasureButton"
@@ -372,6 +412,7 @@ ApplicationWindow {
 
                     Flickable {
                         id: timeline
+                        objectName: "timeline"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         contentWidth: Math.max(width, root.totalSteps * root.cellWidth + 20)
@@ -507,6 +548,42 @@ ApplicationWindow {
                                 }
                             }
 
+                            Rectangle {
+                                id: playbackPlayhead
+                                objectName: "playbackPlayhead"
+                                property int currentStep: app.playbackStep
+                                x: Math.max(0, currentStep) * root.cellWidth
+                                y: 0
+                                width: root.cellWidth - root.rowGap
+                                height: canvas.height
+                                visible: app.playing && currentStep >= 0
+                                enabled: false
+                                color: "#2b1a3d"
+                                opacity: 0.16
+                                border.color: "#5b3e73"
+                                border.width: 3
+                                radius: 10
+                                z: 4
+
+                                Rectangle {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    width: 4
+                                    height: parent.height
+                                    color: "#5b3e73"
+                                    radius: 2
+                                }
+
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.top: parent.top
+                                    anchors.topMargin: 4
+                                    text: "▼"
+                                    color: "#5b3e73"
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                }
+                            }
+
                             Repeater {
                                 model: app.composition
                                 delegate: Rectangle {
@@ -515,6 +592,8 @@ ApplicationWindow {
                                     required property int pitchRow
                                     required property int soundId
                                     property bool pitched: kind === "pitched"
+                                    property bool sounding: app.playing && app.playbackStep === step
+                                    objectName: "compositionToken-%1-%2".arg(step).arg(pitchRow)
                                     x: step * root.cellWidth + 12
                                     y: pitched
                                        ? (6 - pitchRow) * (root.rowHeight + root.rowGap) + 9
@@ -525,8 +604,8 @@ ApplicationWindow {
                                     radius: pitched ? 21 : 10
                                     color: pitched ? root.soundColors[soundId]
                                                    : root.drumColors[soundId]
-                                    border.color: "#ffffff"
-                                    border.width: 3
+                                    border.color: sounding ? "#2b1a3d" : "#ffffff"
+                                    border.width: sounding ? 6 : 3
                                     z: 5
 
                                     Text {

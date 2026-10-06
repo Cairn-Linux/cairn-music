@@ -3,6 +3,7 @@
 #include <QAccessible>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -33,6 +34,22 @@ QQuickItem *findQuickItem(QQuickItem *parent, const QString &objectName)
     }
     for (QQuickItem *child : parent->childItems()) {
         if (QQuickItem *match = findQuickItem(child, objectName)) {
+            return match;
+        }
+    }
+    return nullptr;
+}
+
+QQuickItem *findQuickItemByText(QQuickItem *parent, const QString &text)
+{
+    if (!parent) {
+        return nullptr;
+    }
+    if (parent->property("text").toString() == text) {
+        return parent;
+    }
+    for (QQuickItem *child : parent->childItems()) {
+        if (QQuickItem *match = findQuickItemByText(child, text)) {
             return match;
         }
     }
@@ -104,6 +121,7 @@ private slots:
     void controlsPlayStopAndLoopThroughQml();
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
+    void keepsSoundLabelsReadableAtSupportedWindowSizes();
     void clicksPitchedPlacementPaths();
     void handlesPitchedPlacementFeedback();
 };
@@ -513,6 +531,58 @@ void QmlSmokeTest::exposesKeyboardFocusAndAccessibleControlNames()
     QCoreApplication::processEvents();
     QCOMPARE(controller.selectedKind(), QStringLiteral("pitched"));
     QCOMPARE(controller.selectedSound(), 3);
+}
+
+void QmlSmokeTest::keepsSoundLabelsReadableAtSupportedWindowSizes()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+
+    struct LabelExpectation {
+        QString buttonName;
+        QString text;
+    };
+    const QList<LabelExpectation> labels = {
+        {QStringLiteral("pitchedSoundButton-0"), QStringLiteral("Keys")},
+        {QStringLiteral("pitchedSoundButton-1"), QStringLiteral("Bell")},
+        {QStringLiteral("pitchedSoundButton-2"), QStringLiteral("Bird")},
+        {QStringLiteral("pitchedSoundButton-3"), QStringLiteral("Bubble")},
+        {QStringLiteral("percussionSoundButton-0"), QStringLiteral("Thump")},
+        {QStringLiteral("percussionSoundButton-1"), QStringLiteral("Clap")},
+    };
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+
+        for (const LabelExpectation &expectation : labels) {
+            QQuickItem *button = findQuickItem(window->contentItem(), expectation.buttonName);
+            QVERIFY2(button != nullptr, qPrintable(expectation.buttonName));
+            QQuickItem *label = findQuickItemByText(button, expectation.text);
+            QVERIFY2(label != nullptr, qPrintable(expectation.text));
+            QVERIFY2(label->isVisible(), qPrintable(expectation.text));
+
+            const QFont font = label->property("font").value<QFont>();
+            QVERIFY2(font.pixelSize() >= 18, qPrintable(expectation.text));
+
+            const QRectF labelRect = label->mapRectToItem(
+                button, QRectF(0, 0, label->width(), label->height()));
+            QVERIFY2(QRectF(0, 0, button->width(), button->height()).contains(labelRect),
+                     qPrintable(expectation.text));
+            QVERIFY2(button->width() >= 44 && button->height() >= 44,
+                     qPrintable(expectation.buttonName));
+        }
+    }
 }
 
 void QmlSmokeTest::clicksPitchedPlacementPaths()

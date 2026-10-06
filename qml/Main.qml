@@ -259,7 +259,7 @@ ApplicationWindow {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: root.soundNames[index]
                                     color: "#3a2948"
-                                    font.pixelSize: 16
+                                    font.pixelSize: 18
                                     font.bold: true
                                 }
                             }
@@ -315,7 +315,7 @@ ApplicationWindow {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: root.drumNames[index]
                                     color: "#3a2948"
-                                    font.pixelSize: 15
+                                    font.pixelSize: 18
                                     font.bold: true
                                 }
                             }

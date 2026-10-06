@@ -106,6 +106,7 @@ private slots:
     void exposesKeyboardFocusAndAccessibleControlNames();
     void clicksPitchedPlacementPaths();
     void handlesPitchedPlacementFeedback();
+    void keepsAddMeasureUsableAtMinimumSize();
 };
 
 void QmlSmokeTest::loadsPicturesWorkspace()
@@ -621,6 +622,41 @@ void QmlSmokeTest::handlesPitchedPlacementFeedback()
     qDeleteAll(QTestAccessibility::events());
     QTestAccessibility::clearEvents();
     QTestAccessibility::cleanup();
+}
+
+void QmlSmokeTest::keepsAddMeasureUsableAtMinimumSize()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    window->resize(900, 620);
+    QCoreApplication::processEvents();
+    QCOMPARE(window->size(), QSize(900, 620));
+
+    QQuickItem *button = findQuickItem(window->contentItem(),
+                                       QStringLiteral("addMeasureButton"));
+    QVERIFY(button != nullptr);
+    const QRectF buttonRect = button->mapRectToScene(button->boundingRect());
+    const QRectF windowRect(QPointF(0, 0), window->size());
+    QVERIFY2(windowRect.contains(buttonRect),
+             qPrintable(QStringLiteral("Add measure bounds %1,%2 %3x%4 exceed window %5x%6")
+                            .arg(buttonRect.x()).arg(buttonRect.y())
+                            .arg(buttonRect.width()).arg(buttonRect.height())
+                            .arg(window->width()).arg(window->height())));
+    QVERIFY(buttonRect.width() >= 44.0);
+    QVERIFY(buttonRect.height() >= 44.0);
+
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 3);
 }
 
 QTEST_MAIN(QmlSmokeTest)

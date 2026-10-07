@@ -43,6 +43,14 @@ ApplicationWindow {
     property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
     property bool loopRestartNoticeVisible: false
     property bool recoveryActionFailed: false
+    readonly property color panelColor: "#36254c"
+    readonly property color panelTextColor: "#fff8ec"
+    readonly property color panelHoverColor: "#f0d9ad"
+    readonly property color panelFocusColor: "#f8cf74"
+    readonly property color panelDisabledColor: "#b9a9c8"
+    readonly property bool modalPopupActive: clearSongDialog.visible || loadFailurePopup.visible
+    property int timelineFocusStep: 0
+    property int timelineFocusLane: 0
     readonly property bool toolPointerActive:
         active && Qt.application.state === Qt.ApplicationActive
 
@@ -103,12 +111,107 @@ ApplicationWindow {
     function markInteraction() {
         hasInteracted = true
         inactivityHintVisible = false
-        inactivityTimer.stop()
+        if (modalPopupActive)
+            inactivityTimer.stop()
+        else
+            inactivityTimer.restart()
     }
 
     function showInactivityGuidance() {
-        if (!hasInteracted)
+        if (!modalPopupActive && !hasInteracted)
             inactivityHintVisible = true
+    }
+
+    function suspendInactivityGuidance() {
+        inactivityTimer.stop()
+        inactivityHintVisible = false
+    }
+
+    function beginInactivityCycle() {
+        inactivityHintVisible = false
+        if (!modalPopupActive) {
+            hasInteracted = true
+            inactivityTimer.restart()
+        }
+    }
+
+    function handleInactivityTimeout() {
+        hasInteracted = false
+        showInactivityGuidance()
+    }
+
+    onModalPopupActiveChanged: {
+        if (modalPopupActive)
+            suspendInactivityGuidance()
+        else
+            beginInactivityCycle()
+    }
+
+    function findTimelineDescendant(item, wantedName) {
+        if (!item)
+            return null
+        if (item.objectName === wantedName)
+            return item
+        const descendants = item.children
+        for (let index = 0; index < descendants.length; ++index) {
+            const match = findTimelineDescendant(descendants[index], wantedName)
+            if (match)
+                return match
+        }
+        return null
+    }
+
+    // The timeline is one Tab stop. Arrow keys move through its spatial grid;
+    // a placed token replaces its cell as the focus target instead of adding an
+    // insertion-ordered stop. Tab/Backtab leave to the surrounding controls.
+    function timelineTarget(step, lane) {
+        let tokenName
+        let cellName
+        if (lane < 7) {
+            const pitch = 6 - lane
+            tokenName = "pitchedTokenMouse-%1-%2".arg(step).arg(pitch)
+            cellName = "pitchCellMouse-%1-%2".arg(step).arg(pitch)
+        } else {
+            const drum = lane - 7
+            tokenName = "percussionTokenMouse-%1-%2".arg(step).arg(drum)
+            cellName = "drumCellMouse-%1-%2".arg(step).arg(drum)
+        }
+        return findTimelineDescendant(canvas, tokenName)
+            || findTimelineDescendant(canvas, cellName)
+    }
+
+    function focusTimelinePosition(step, lane) {
+        timelineFocusStep = Math.max(0, Math.min(totalSteps - 1, step))
+        timelineFocusLane = Math.max(0, Math.min(8, lane))
+        const target = timelineTarget(timelineFocusStep, timelineFocusLane)
+        if (target) {
+            target.forceActiveFocus(Qt.TabFocusReason)
+            revealTimelineItem(target)
+        }
+    }
+
+    function handleTimelineKey(event, step, lane) {
+        if (modalPopupActive)
+            return
+        if (event.key === Qt.Key_Left) {
+            focusTimelinePosition(step - 1, lane)
+        } else if (event.key === Qt.Key_Right) {
+            focusTimelinePosition(step + 1, lane)
+        } else if (event.key === Qt.Key_Up) {
+            focusTimelinePosition(step, lane - 1)
+        } else if (event.key === Qt.Key_Down) {
+            focusTimelinePosition(step, lane + 1)
+        } else if (event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier)) {
+            const next = undoButton.enabled ? undoButton : eraserButton
+            next.forceActiveFocus(Qt.TabFocusReason)
+        } else if (event.key === Qt.Key_Backtab
+                   || (event.key === Qt.Key_Tab && event.modifiers & Qt.ShiftModifier)) {
+            const previous = addMeasureButton.enabled ? addMeasureButton : removeMeasureButton
+            previous.forceActiveFocus(Qt.BacktabFocusReason)
+        } else {
+            return
+        }
+        event.accepted = true
     }
 
     function activatePitchCell(step, pitch) {
@@ -181,9 +284,10 @@ ApplicationWindow {
 
     Timer {
         id: inactivityTimer
+        objectName: "inactivityTimer"
         interval: 6000
         repeat: false
-        onTriggered: root.showInactivityGuidance()
+        onTriggered: root.handleInactivityTimeout()
     }
 
     Timer {
@@ -194,7 +298,7 @@ ApplicationWindow {
         onTriggered: root.focusInteractionArmed = true
     }
 
-    Component.onCompleted: inactivityTimer.start()
+    Component.onCompleted: beginInactivityCycle()
 
     Timer {
         id: loopRestartNoticeTimer
@@ -292,6 +396,7 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
 
             ToolButton {
+                id: undoButton
                 objectName: "undoButton"
                 Layout.minimumHeight: 44
                 text: qsTr("↶  Undo")
@@ -515,6 +620,25 @@ ApplicationWindow {
                     CheckBox {
                         id: reduceMotionCheckBox
                         objectName: "reduceMotionCheckBox"
+                        readonly property color normalTextColor: root.panelTextColor
+                        readonly property color hoverTextColor: root.panelHoverColor
+                        readonly property color focusTextColor: root.panelFocusColor
+                        readonly property color checkedTextColor: root.panelFocusColor
+                        readonly property color disabledTextColor: root.panelDisabledColor
+                        readonly property color normalIndicatorColor: root.panelTextColor
+                        readonly property color hoverIndicatorColor: root.panelHoverColor
+                        readonly property color focusIndicatorColor: root.panelFocusColor
+                        readonly property color checkedIndicatorColor: root.panelFocusColor
+                        readonly property color disabledIndicatorColor: root.panelDisabledColor
+                        readonly property color currentTextColor: !enabled ? disabledTextColor
+                            : activeFocus ? focusTextColor
+                            : checked ? checkedTextColor
+                            : hovered ? hoverTextColor : normalTextColor
+                        readonly property color currentIndicatorColor: !enabled
+                            ? disabledIndicatorColor
+                            : activeFocus ? focusIndicatorColor
+                            : checked ? checkedIndicatorColor
+                            : hovered ? hoverIndicatorColor : normalIndicatorColor
                         Layout.fillWidth: true
                         Layout.minimumHeight: 44
                         text: qsTr("Reduce motion")
@@ -525,6 +649,42 @@ ApplicationWindow {
                             root.reduceMotion = checked
                         }
                         Accessible.name: qsTr("Reduce motion")
+
+                        indicator: Rectangle {
+                            id: reduceMotionIndicator
+                            objectName: "reduceMotionIndicator"
+                            implicitWidth: 28
+                            implicitHeight: 28
+                            x: reduceMotionCheckBox.leftPadding
+                            y: (reduceMotionCheckBox.height - height) / 2
+                            radius: 6
+                            color: "transparent"
+                            border.color: reduceMotionCheckBox.currentIndicatorColor
+                            border.width: reduceMotionCheckBox.activeFocus ? 4 : 3
+
+                            Text {
+                                id: reduceMotionMark
+                                objectName: "reduceMotionMark"
+                                anchors.centerIn: parent
+                                visible: reduceMotionCheckBox.checked
+                                text: "✓"
+                                color: reduceMotionCheckBox.currentIndicatorColor
+                                font.pixelSize: 21
+                                font.bold: true
+                                Accessible.ignored: true
+                            }
+                        }
+
+                        contentItem: Text {
+                            id: reduceMotionLabel
+                            objectName: "reduceMotionLabel"
+                            leftPadding: reduceMotionCheckBox.indicator.width
+                                + reduceMotionCheckBox.spacing
+                            text: reduceMotionCheckBox.text
+                            color: reduceMotionCheckBox.currentTextColor
+                            font: reduceMotionCheckBox.font
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
 
                     Item { Layout.fillHeight: true }
@@ -620,6 +780,7 @@ ApplicationWindow {
                             Accessible.name: qsTr("Clear Song")
                         }
                         Button {
+                            id: removeMeasureButton
                             objectName: "removeMeasureButton"
                             Layout.minimumWidth: 44
                             Layout.minimumHeight: 44
@@ -632,6 +793,7 @@ ApplicationWindow {
                             Accessible.name: qsTr("Remove final measure")
                         }
                         Button {
+                            id: addMeasureButton
                             objectName: "addMeasureButton"
                             Layout.minimumWidth: 44
                             Layout.minimumHeight: 44
@@ -648,6 +810,15 @@ ApplicationWindow {
                     Flickable {
                         id: timeline
                         objectName: "timeline"
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Pane
+                        Accessible.name: qsTr("Song timeline. Use arrow keys to move between beats and rows.")
+                        onActiveFocusChanged: {
+                            if (activeFocus && root.activeFocusItem === timeline)
+                                Qt.callLater(root.focusTimelinePosition,
+                                             root.timelineFocusStep,
+                                             root.timelineFocusLane)
+                        }
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         contentWidth: Math.max(width, root.totalSteps * root.cellWidth + 20)
@@ -741,10 +912,24 @@ ApplicationWindow {
                                             objectName: "pitchCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.pitch)
                                             anchors.fill: parent
-                                            activeFocusOnTab: true
+                                            // A single entry cell represents the whole timeline in
+                                            // the Tab chain; arrows reach every other destination.
+                                            activeFocusOnTab: parent.stepIndex === 0
+                                                && parent.visualRow === 0
+                                            KeyNavigation.tab: activeFocusOnTab
+                                                ? (undoButton.enabled ? undoButton : eraserButton)
+                                                : null
+                                            KeyNavigation.backtab: activeFocusOnTab
+                                                ? (addMeasureButton.enabled
+                                                   ? addMeasureButton : removeMeasureButton)
+                                                : null
+                                            KeyNavigation.priority: KeyNavigation.BeforeItem
                                             onActiveFocusChanged: {
-                                                if (activeFocus)
+                                                if (activeFocus) {
+                                                    root.timelineFocusStep = parent.stepIndex
+                                                    root.timelineFocusLane = parent.visualRow
                                                     root.revealTimelineItem(this)
+                                                }
                                             }
                                             cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
                                             Accessible.role: Accessible.Button
@@ -764,6 +949,8 @@ ApplicationWindow {
                                                 root.activatePitchCell(parent.stepIndex, parent.pitch)
                                             Keys.onReturnPressed:
                                                 root.activatePitchCell(parent.stepIndex, parent.pitch)
+                                            Keys.onPressed: event => root.handleTimelineKey(
+                                                event, parent.stepIndex, parent.visualRow)
                                         }
                                     }
                                 }
@@ -819,10 +1006,13 @@ ApplicationWindow {
                                             objectName: "drumCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.drumRow)
                                             anchors.fill: parent
-                                            activeFocusOnTab: true
+                                            activeFocusOnTab: false
                                             onActiveFocusChanged: {
-                                                if (activeFocus)
+                                                if (activeFocus) {
+                                                    root.timelineFocusStep = parent.stepIndex
+                                                    root.timelineFocusLane = 7 + parent.drumRow
                                                     root.revealTimelineItem(this)
+                                                }
                                             }
                                             cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
                                             Accessible.role: Accessible.Button
@@ -841,6 +1031,8 @@ ApplicationWindow {
                                                 root.activateDrumCell(parent.stepIndex, parent.drumRow)
                                             Keys.onReturnPressed:
                                                 root.activateDrumCell(parent.stepIndex, parent.drumRow)
+                                            Keys.onPressed: event => root.handleTimelineKey(
+                                                event, parent.stepIndex, 7 + parent.drumRow)
                                         }
                                     }
                                 }
@@ -909,6 +1101,23 @@ ApplicationWindow {
                                     scale: root.compactLayout ? 1.0 : popScale
                                     z: 5
 
+                                    Rectangle {
+                                        objectName: parent.pitched
+                                            ? "pitchedTokenFocusRing-%1-%2"
+                                                  .arg(parent.step).arg(parent.pitchRow)
+                                            : "percussionTokenFocusRing-%1-%2"
+                                                  .arg(parent.step).arg(parent.pitchRow)
+                                        anchors.fill: parent
+                                        anchors.margins: 2
+                                        radius: Math.max(4, parent.radius - 2)
+                                        visible: tokenMouse.activeFocus
+                                        color: "transparent"
+                                        border.color: "#21152f"
+                                        border.width: 4
+                                        z: 2
+                                        Accessible.ignored: true
+                                    }
+
                                     Text {
                                         anchors.centerIn: parent
                                         text: parent.pitched ? root.soundMarks[parent.soundId]
@@ -925,6 +1134,7 @@ ApplicationWindow {
                                     }
 
                                     MouseArea {
+                                        id: tokenMouse
                                         objectName: parent.pitched
                                             ? "pitchedTokenMouse-%1-%2"
                                                   .arg(parent.step).arg(parent.pitchRow)
@@ -933,10 +1143,14 @@ ApplicationWindow {
                                         anchors.centerIn: parent
                                         width: Math.max(44, parent.width)
                                         height: Math.max(44, parent.height)
-                                        activeFocusOnTab: true
+                                        activeFocusOnTab: false
                                         onActiveFocusChanged: {
-                                            if (activeFocus)
+                                            if (activeFocus) {
+                                                root.timelineFocusStep = parent.step
+                                                root.timelineFocusLane = parent.pitched
+                                                    ? 6 - parent.pitchRow : 7 + parent.pitchRow
                                                 root.revealTimelineItem(this)
+                                            }
                                         }
                                         cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
                                         Accessible.role: Accessible.Button
@@ -959,6 +1173,10 @@ ApplicationWindow {
                                         Keys.onReturnPressed: parent.pitched
                                             ? root.activatePitchCell(parent.step, parent.pitchRow)
                                             : root.activateDrumCell(parent.step, parent.pitchRow)
+                                        Keys.onPressed: event => root.handleTimelineKey(
+                                            event, parent.step,
+                                            parent.pitched ? 6 - parent.pitchRow
+                                                           : 7 + parent.pitchRow)
                                     }
                                 }
                             }
@@ -1161,10 +1379,12 @@ ApplicationWindow {
         anchors.centerIn: Overlay.overlay
         width: Math.min(460, root.width - 48)
         modal: true
+        focus: true
         visible: app.loadFailed
         closePolicy: Popup.NoAutoClose
         padding: 28
         onAboutToShow: root.recoveryActionFailed = false
+        onOpened: recoveryActionButton.forceActiveFocus(Qt.PopupFocusReason)
 
         background: Rectangle {
             radius: 20
@@ -1206,6 +1426,7 @@ ApplicationWindow {
             }
 
             Button {
+                id: recoveryActionButton
                 objectName: "recoveryActionButton"
                 Layout.alignment: Qt.AlignHCenter
                 Layout.minimumWidth: 44

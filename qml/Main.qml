@@ -221,11 +221,11 @@ ApplicationWindow {
                 id: playButton
                 objectName: "playButton"
                 Layout.minimumHeight: 44
-                text: app.playing ? qsTr("■  Stop") : qsTr("▶  Play")
+                text: app.compositionPlaying ? qsTr("■  Stop") : qsTr("▶  Play")
                 highlighted: true
                 font.pixelSize: 17
-                onClicked: app.playing ? app.stop() : app.play()
-                Accessible.name: app.playing ? qsTr("Stop song") : qsTr("Play song")
+                onClicked: app.compositionPlaying ? app.stop() : app.play()
+                Accessible.name: app.compositionPlaying ? qsTr("Stop song") : qsTr("Play song")
             }
             CheckBox {
                 objectName: "loopCheckBox"
@@ -475,7 +475,7 @@ ApplicationWindow {
                         Label {
                             id: playbackStatus
                             objectName: "playbackStatus"
-                            visible: app.playing && text.length > 0
+                            visible: app.compositionPlaying && text.length > 0
                             text: app.playbackStatus
                             color: "#5b3e73"
                             font.pixelSize: 14
@@ -512,7 +512,7 @@ ApplicationWindow {
                         Label {
                             id: loopRestartBadge
                             objectName: "loopRestartBadge"
-                            visible: app.playing && root.loopRestartNoticeVisible
+                            visible: app.compositionPlaying && root.loopRestartNoticeVisible
                             text: qsTr("Loop %1 • back to beat 1").arg(app.playbackCycle + 1)
                             color: "#3d2452"
                             font.pixelSize: 14
@@ -695,7 +695,7 @@ ApplicationWindow {
                                 y: 0
                                 width: root.cellWidth - root.rowGap
                                 height: canvas.height
-                                visible: app.playing && currentStep >= 0
+                                visible: app.compositionPlaying && currentStep >= 0
                                 enabled: false
                                 color: "#2b1a3d"
                                 opacity: 0.16
@@ -731,7 +731,7 @@ ApplicationWindow {
                                     required property int pitchRow
                                     required property int soundId
                                     property bool pitched: kind === "pitched"
-                                    property bool sounding: app.playing && app.playbackStep === step
+                                    property bool sounding: app.compositionPlaying && app.playbackStep === step
                                     objectName: "compositionToken-%1-%2".arg(step).arg(pitchRow)
                                     x: step * root.cellWidth + 12
                                     y: pitched

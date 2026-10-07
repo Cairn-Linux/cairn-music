@@ -96,6 +96,9 @@ bool clickQuickItem(QObject *root, const QString &objectName)
 {
     auto *window = qobject_cast<QQuickWindow *>(root);
     auto *item = window ? findQuickItem(window->contentItem(), objectName) : nullptr;
+    if (!item && window) {
+        item = window->findChild<QQuickItem *>(objectName);
+    }
     if (!window || !item || !item->isVisible()) {
         return false;
     }
@@ -163,6 +166,7 @@ class QmlSmokeTest : public QObject
 private slots:
     void loadsPicturesWorkspace();
     void showsAutosaveFailureWarning();
+    void reportsRecoveryActionFailureAndClearsItAfterRetry();
     void showsRecoverableAudioFailureWarning();
     void selectsEverySoundThroughPointerPath();
     void placesPercussionThroughSeparateLane();
@@ -283,6 +287,100 @@ void QmlSmokeTest::showsAutosaveFailureWarning()
         }
     }
     QVERIFY(announced);
+
+    qDeleteAll(QTestAccessibility::events());
+    QTestAccessibility::clearEvents();
+    QTestAccessibility::cleanup();
+}
+
+void QmlSmokeTest::reportsRecoveryActionFailureAndClearsItAfterRetry()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString autosavePath = directory.filePath("autosave.json");
+    const QByteArray malformed = "{not valid json";
+    QFile autosave(autosavePath);
+    QVERIFY(autosave.open(QIODevice::WriteOnly));
+    QCOMPARE(autosave.write(malformed), malformed.size());
+    autosave.close();
+
+    bool saveSucceeds = false;
+    auto audio = std::make_unique<AudioEngine>(false);
+    AppController controller(
+        autosavePath, false, std::move(audio),
+        [&saveSucceeds](const QString &, const CompositionModel &) { return saveSucceeds; });
+    QVERIFY(controller.loadFailed());
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+
+    QObject *popup = window->findChild<QObject *>("loadFailurePopup");
+    QQuickItem *failure = window->findChild<QQuickItem *>("recoveryActionFailure");
+    QVERIFY(popup != nullptr);
+    QVERIFY(failure != nullptr);
+    QVERIFY(popup->property("visible").toBool());
+    QVERIFY(!failure->isVisible());
+
+    QTestAccessibility::initialize();
+    QTestAccessibility::clearEvents();
+    QVERIFY(clickQuickItem(window, QStringLiteral("recoveryActionButton")));
+    QVERIFY(controller.loadFailed());
+    QVERIFY(popup->property("visible").toBool());
+    QVERIFY(failure->isVisible());
+    QCOMPARE(failure->property("text").toString(),
+             QStringLiteral("We couldn't keep this song safe yet. Please try again."));
+    QVERIFY(!failure->property("text").toString().contains(autosavePath));
+
+    QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(failure);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->role(), QAccessible::AlertMessage);
+    QCOMPARE(accessible->text(QAccessible::Name), failure->property("text").toString());
+
+    bool announced = false;
+    for (const QAccessibleEvent *event : QTestAccessibility::events()) {
+        if (event->type() != QAccessible::Announcement) {
+            continue;
+        }
+        const auto *announcement = static_cast<const QAccessibleAnnouncementEvent *>(event);
+        if (announcement->message() == failure->property("text").toString()
+            && announcement->politeness() == QAccessible::AnnouncementPoliteness::Polite) {
+            announced = true;
+            break;
+        }
+    }
+    QVERIFY(announced);
+
+    QVERIFY(autosave.open(QIODevice::ReadOnly));
+    QCOMPARE(autosave.readAll(), malformed);
+    autosave.close();
+
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        const QRectF failureRect = failure->mapRectToScene(failure->boundingRect());
+        const QRectF windowRect(QPointF(0, 0), size);
+        QVERIFY(windowRect.contains(failureRect));
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/recovery-failure-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
+    saveSucceeds = true;
+    QVERIFY(clickQuickItem(window, QStringLiteral("recoveryActionButton")));
+    QVERIFY(!controller.loadFailed());
+    QVERIFY(!popup->property("visible").toBool());
+    QVERIFY(!failure->isVisible());
 
     qDeleteAll(QTestAccessibility::events());
     QTestAccessibility::clearEvents();

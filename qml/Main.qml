@@ -34,6 +34,7 @@ ApplicationWindow {
     property bool placementFeedbackVisible: false
     property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
     property bool loopRestartNoticeVisible: false
+    property bool recoveryActionFailed: false
     readonly property bool toolPointerActive:
         active && Qt.application.state === Qt.ApplicationActive
 
@@ -934,12 +935,14 @@ ApplicationWindow {
 
     Popup {
         id: loadFailurePopup
+        objectName: "loadFailurePopup"
         anchors.centerIn: Overlay.overlay
         width: Math.min(460, root.width - 48)
         modal: true
         visible: app.loadFailed
         closePolicy: Popup.NoAutoClose
         padding: 28
+        onAboutToShow: root.recoveryActionFailed = false
 
         background: Rectangle {
             radius: 20
@@ -962,10 +965,33 @@ ApplicationWindow {
                 Accessible.name: text
             }
 
+            Label {
+                objectName: "recoveryActionFailure"
+                Layout.fillWidth: true
+                visible: root.recoveryActionFailed
+                text: qsTr("We couldn't keep this song safe yet. Please try again.")
+                color: "#7a3d00"
+                font.pixelSize: 16
+                font.bold: true
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                Accessible.name: text
+                Accessible.role: Accessible.AlertMessage
+                onVisibleChanged: {
+                    if (visible)
+                        Accessible.announce(text, Accessible.Polite)
+                }
+            }
+
             Button {
+                objectName: "recoveryActionButton"
                 Layout.alignment: Qt.AlignHCenter
                 text: qsTr("Keep it safe and start a new song")
-                onClicked: app.preserveFailedAutosaveAndStartNew()
+                onClicked: {
+                    root.recoveryActionFailed = false
+                    if (!app.preserveFailedAutosaveAndStartNew())
+                        root.recoveryActionFailed = true
+                }
                 Accessible.name: qsTr("Preserve the old song and start a new song")
             }
         }

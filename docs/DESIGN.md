@@ -366,7 +366,11 @@ does not invoke Guardian recovery.
 
 The prototype stores bounded, versioned JSON under `QStandardPaths` using
 `QSaveFile`. It automatically loads on startup. A malformed or unsupported file
-leaves the editor usable with a new composition and is not silently overwritten.
+blocks the editor behind a recovery popup and is not silently overwritten. The
+prototype copies and verifies the original bytes before an adult can start a new
+composition. If preservation, verification, or the fresh save fails, the editor
+stays blocked, the original autosave stays untouched, and the popup gives a
+short path-free retry message.
 
 The prototype format is disposable and is not the product's schema v1.
 

@@ -29,6 +29,44 @@ ApplicationWindow {
     property bool loopRestartNoticeVisible: false
     readonly property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
 
+    component EraserGlyph: Item {
+        width: 32
+        height: 28
+
+        Item {
+            anchors.centerIn: parent
+            width: 29
+            height: 15
+            rotation: -28
+
+            Rectangle {
+                x: 0
+                width: 9
+                height: parent.height
+                radius: 3
+                color: "#ff8f9c"
+                border.color: "#49324f"
+                border.width: 2
+            }
+            Rectangle {
+                x: 7
+                width: 22
+                height: parent.height
+                radius: 3
+                color: "#fff0cf"
+                border.color: "#49324f"
+                border.width: 2
+            }
+            Rectangle {
+                x: 8
+                width: 2
+                height: parent.height - 4
+                anchors.verticalCenter: parent.verticalCenter
+                color: "#49324f"
+            }
+        }
+    }
+
     function placePitchedAt(step, pitch) {
         const placed = app.placePitched(step, pitch)
         if (placed || !app.pitchedPlacementRejected) {
@@ -105,12 +143,30 @@ ApplicationWindow {
                 id: eraserButton
                 objectName: "eraserButton"
                 Layout.minimumHeight: 44
-                text: root.eraseMode ? qsTr("✓  Eraser") : qsTr("✕  Eraser")
+                Layout.minimumWidth: 112
+                text: qsTr("Eraser")
                 checkable: true
                 checked: root.eraseMode
                 font.pixelSize: 16
                 onClicked: root.eraseMode = checked
                 Accessible.name: qsTr("Eraser tool")
+
+                contentItem: Row {
+                    spacing: 8
+                    anchors.centerIn: parent
+
+                    EraserGlyph {
+                        id: eraserIcon
+                        objectName: "eraserIcon"
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: eraserButton.text
+                        color: "#fff8ec"
+                        font: eraserButton.font
+                    }
+                }
             }
             Button {
                 id: playButton
@@ -492,7 +548,7 @@ ApplicationWindow {
                                             objectName: "pitchCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.pitch)
                                             anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
+                                            cursorShape: Qt.BlankCursor
                                             onClicked: {
                                                 if (root.eraseMode)
                                                     app.eraseAt("pitched", parent.stepIndex, parent.pitch)
@@ -550,7 +606,7 @@ ApplicationWindow {
                                             objectName: "drumCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.drumRow)
                                             anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
+                                            cursorShape: Qt.BlankCursor
                                             onClicked: {
                                                 if (root.eraseMode)
                                                     app.eraseAt("percussion", parent.stepIndex,
@@ -645,7 +701,7 @@ ApplicationWindow {
                                                   .arg(parent.step).arg(parent.pitchRow)
                                             : ""
                                         anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
+                                        cursorShape: Qt.BlankCursor
                                         onClicked: {
                                             if (root.eraseMode)
                                                 app.eraseAt(parent.kind, parent.step, parent.pitchRow)
@@ -656,6 +712,64 @@ ApplicationWindow {
                                                 app.placePercussion(parent.step)
                                         }
                                     }
+                                }
+                            }
+
+                            Item {
+                                id: compositionHoverSurface
+                                x: 0
+                                y: 0
+                                width: canvas.width
+                                height: drumLane.y + drumLane.height
+                                z: 90
+
+                                HoverHandler {
+                                    id: compositionHover
+                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                    cursorShape: Qt.BlankCursor
+                                }
+                            }
+
+                            Rectangle {
+                                id: activeToolIndicator
+                                objectName: "activeToolIndicator"
+                                readonly property bool eraserTool: root.eraseMode
+                                width: 36
+                                height: 36
+                                x: Math.min(canvas.width - width,
+                                            Math.max(0, compositionHover.point.position.x + 16))
+                                y: compositionHover.point.position.y >= height + 12
+                                   ? compositionHover.point.position.y - height - 12
+                                   : compositionHover.point.position.y + 16
+                                visible: compositionHover.hovered
+                                enabled: false
+                                z: 100
+                                radius: eraserTool ? 9
+                                                   : app.selectedKind === "pitched" ? 18 : 9
+                                color: eraserTool ? "#fff8ec"
+                                                  : app.selectedKind === "pitched"
+                                                    ? root.soundColors[app.selectedSound]
+                                                    : root.drumColors[app.selectedSound]
+                                border.color: "#49324f"
+                                border.width: 3
+                                Accessible.ignored: true
+
+                                Text {
+                                    id: activeToolIndicatorMark
+                                    objectName: "activeToolIndicatorMark"
+                                    anchors.centerIn: parent
+                                    visible: !activeToolIndicator.eraserTool
+                                    text: app.selectedKind === "pitched"
+                                          ? root.soundMarks[app.selectedSound]
+                                          : root.drumMarks[app.selectedSound]
+                                    color: "#21152f"
+                                    font.pixelSize: 21
+                                    font.bold: true
+                                }
+
+                                EraserGlyph {
+                                    anchors.centerIn: parent
+                                    visible: activeToolIndicator.eraserTool
                                 }
                             }
                         }

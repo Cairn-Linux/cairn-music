@@ -87,6 +87,26 @@ bool CompositionModel::addMeasure()
     return true;
 }
 
+bool CompositionModel::removeLastMeasure()
+{
+    if (m_measureCount <= 2) {
+        return false;
+    }
+
+    saveUndoPoint();
+    const int firstRemovedStep = (m_measureCount - 1) * stepsPerMeasure();
+    beginResetModel();
+    --m_measureCount;
+    for (int row = m_tokens.size() - 1; row >= 0; --row) {
+        if (m_tokens.at(row).step >= firstRemovedStep) {
+            m_tokens.removeAt(row);
+        }
+    }
+    endResetModel();
+    emit measureCountChanged();
+    return true;
+}
+
 bool CompositionModel::placePitched(int step, int pitchRow, int soundId)
 {
     if (step < 0 || step >= m_measureCount * stepsPerMeasure()

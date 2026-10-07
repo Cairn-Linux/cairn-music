@@ -109,6 +109,8 @@ private slots:
     void percussionPlacementAndReplacementStopBeforeMutationThenPreview();
     void eraserStopsPlaybackBeforeMutation();
     void addMeasureStopsPlaybackBeforeMutation();
+    void removeMeasurePersistsAndUndoRestoresExactEvents();
+    void removeMeasureStopsPlaybackBeforeMutation();
     void recoversFromOutputError();
     void idleUnderrunStopsInsteadOfRestartingLoop();
     void failedLoopRestartBecomesRecoverableError();
@@ -526,6 +528,81 @@ void AppControllerTest::addMeasureStopsPlaybackBeforeMutation()
 
     QVERIFY(measureChangeSawStoppedPlayback);
     QCOMPARE(controller.composition()->measureCount(), 3);
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+}
+
+void AppControllerTest::removeMeasurePersistsAndUndoRestoresExactEvents()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("autosave.json");
+    QJsonObject beforeRemoval;
+
+    {
+        AppController controller(path, false);
+        QVERIFY(controller.addMeasure());
+        controller.selectPitched(3);
+        QVERIFY(controller.placePitched(8, 6));
+        controller.selectPercussion(1);
+        QVERIFY(controller.placePercussion(11));
+        beforeRemoval = controller.composition()->toJson();
+
+        QVERIFY(controller.removeMeasure());
+        QCOMPARE(controller.composition()->measureCount(), 2);
+        QCOMPARE(controller.composition()->rowCount(), 0);
+    }
+
+    {
+        AppController reopened(path, false);
+        QCOMPARE(reopened.composition()->measureCount(), 2);
+        QCOMPARE(reopened.composition()->rowCount(), 0);
+    }
+
+    AppController controller(path, false);
+    QVERIFY(controller.addMeasure());
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(8, 6));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(11));
+    beforeRemoval = controller.composition()->toJson();
+    QVERIFY(controller.removeMeasure());
+    QVERIFY(controller.undo());
+    QCOMPARE(controller.composition()->toJson(), beforeRemoval);
+
+    AppController restored(path, false);
+    QCOMPARE(restored.composition()->toJson(), beforeRemoval);
+}
+
+void AppControllerTest::removeMeasureStopsPlaybackBeforeMutation()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    QVERIFY(controller.addMeasure());
+    controller.setLoopEnabled(true);
+
+    bool measureChangeSawStoppedPlayback = false;
+    connect(controller.composition(), &CompositionModel::measureCountChanged,
+            this, [&] {
+                measureChangeSawStoppedPlayback = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1
+                    && controller.playbackCycle() == 0;
+            });
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+
+    QVERIFY(controller.removeMeasure());
+
+    QVERIFY(measureChangeSawStoppedPlayback);
+    QCOMPARE(controller.composition()->measureCount(), 2);
     QVERIFY(!controller.playing());
     QVERIFY(fakeAudio->resourcesReleased());
     QCOMPARE(controller.playbackStep(), -1);

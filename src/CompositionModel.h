@@ -32,6 +32,7 @@ public:
     [[nodiscard]] int stepsPerMeasure() const noexcept;
     [[nodiscard]] bool canUndo() const noexcept;
     bool addMeasure();
+    bool removeLastMeasure();
     bool placePitched(int step, int pitchRow, int soundId);
     bool placePercussion(int step, int soundId);
     bool eraseAt(const QString &kind, int step, int row);

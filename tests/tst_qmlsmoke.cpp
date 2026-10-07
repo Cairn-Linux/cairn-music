@@ -85,6 +85,11 @@ public:
         handleState(m_outputState);
     }
 
+    [[nodiscard]] bool resourcesReleased() const noexcept
+    {
+        return !activeBufferOpen() && bufferedByteCount() == 0;
+    }
+
 protected:
     [[nodiscard]] bool outputAvailable() const noexcept override { return true; }
     [[nodiscard]] QAudio::Error outputError() const noexcept override
@@ -125,6 +130,7 @@ private slots:
     void placesPercussionThroughSeparateLane();
     void erasesAndUndoesMultiplePointerEdits();
     void addsMeasuresThroughPrototypeLimit();
+    void removesMeasuresWithAccessiblePointerAndKeyboardControl();
     void controlsPlayStopAndLoopThroughQml();
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
@@ -138,7 +144,9 @@ private slots:
     void clearsLoopRestartNoticeForStopAndReplay();
     void clearsLoopRestartNoticeForSoundPreview();
     void clearsPlaybackIndicatorsForUndoMutation();
+    void removesMeasureDuringPlaybackAndUndoRestoresIt();
     void playheadMovesWithScrollableTimeline();
+    void keepsScrolledTimelineInRangeAfterMeasureRemoval();
     void showsSelectedToolBesidePointerOnlyOverGrid();
     void keepsToolIndicatorOutsideDestinationCells();
     void restoresPointerAfterWindowDeactivationAndReentry();
@@ -409,6 +417,85 @@ void QmlSmokeTest::addsMeasuresThroughPrototypeLimit()
     QVERIFY(!button->property("enabled").toBool());
     QVERIFY(clickQuickItem(root, QStringLiteral("addMeasureButton")));
     QCOMPARE(controller.composition()->measureCount(), 8);
+}
+
+void QmlSmokeTest::removesMeasuresWithAccessiblePointerAndKeyboardControl()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QQuickItem *button = findQuickItem(window->contentItem(),
+                                       QStringLiteral("removeMeasureButton"));
+    QVERIFY(button != nullptr);
+    QVERIFY(!button->property("enabled").toBool());
+    QVERIFY(button->property("activeFocusOnTab").toBool());
+
+    QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(button);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Remove final measure"));
+    QCOMPARE(accessible->role(), QAccessible::Button);
+
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        const QRectF buttonRect = button->mapRectToScene(button->boundingRect());
+        QVERIFY(QRectF(QPointF(0, 0), size).contains(buttonRect));
+        QVERIFY(buttonRect.width() >= 44.0);
+        QVERIFY(buttonRect.height() >= 44.0);
+
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/remove-measure-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 3);
+    QVERIFY(button->property("enabled").toBool());
+
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(8, 6));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(11));
+    const QJsonObject beforeRemoval = controller.composition()->toJson();
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QVERIFY(clickQuickItem(window, QStringLiteral("undoButton")));
+    QCOMPARE(controller.composition()->toJson(), beforeRemoval);
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
+    button->forceActiveFocus(Qt::TabFocusReason);
+    QVERIFY(button->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Space);
+    QCoreApplication::processEvents();
+    QCOMPARE(controller.composition()->measureCount(), 2);
+
+    while (controller.composition()->measureCount() < 8) {
+        QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
+    }
+    for (int expected = 7; expected >= 2; --expected) {
+        QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+        QCOMPARE(controller.composition()->measureCount(), expected);
+    }
+    QVERIFY(!button->property("enabled").toBool());
 }
 
 void QmlSmokeTest::controlsPlayStopAndLoopThroughQml()
@@ -984,6 +1071,55 @@ void QmlSmokeTest::clearsPlaybackIndicatorsForUndoMutation()
     QVERIFY(!activeToken->property("sounding").toBool());
 }
 
+void QmlSmokeTest::removesMeasureDuringPlaybackAndUndoRestoresIt()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    QVERIFY(controller.addMeasure());
+    controller.selectPitched(2);
+    QVERIFY(controller.placePitched(8, 5));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(11));
+    controller.stop();
+    const QJsonObject beforeRemoval = controller.composition()->toJson();
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QQuickItem *playhead = findQuickItem(window->contentItem(), "playbackPlayhead");
+    QVERIFY(restartBadge != nullptr);
+    QVERIFY(playhead != nullptr);
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("playButton")));
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(controller.playing());
+    QCOMPARE(controller.playbackCycle(), 1);
+    QVERIFY(restartBadge->property("visible").toBool());
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+    QVERIFY(!restartBadge->property("visible").toBool());
+    QVERIFY(!playhead->property("visible").toBool());
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("undoButton")));
+    QCOMPARE(controller.composition()->toJson(), beforeRemoval);
+}
+
 void QmlSmokeTest::playheadMovesWithScrollableTimeline()
 {
     QTemporaryDir directory;
@@ -1012,6 +1148,51 @@ void QmlSmokeTest::playheadMovesWithScrollableTimeline()
     QCoreApplication::processEvents();
     const qreal after = playhead->mapToScene(QPointF()).x();
     QVERIFY(qAbs((before - after) - 120.0) < 1.0);
+}
+
+void QmlSmokeTest::keepsScrolledTimelineInRangeAfterMeasureRemoval()
+{
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppController controller(directory.filePath("autosave.json"), false);
+        while (controller.composition()->measureCount() < 8) {
+            QVERIFY(controller.addMeasure());
+        }
+
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+        QVERIFY(window != nullptr);
+        window->resize(size);
+        QCoreApplication::processEvents();
+
+        QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+        QVERIFY(timeline != nullptr);
+        const qreal oldMaximum = qMax(
+            0.0, timeline->property("contentWidth").toReal() - timeline->width());
+        QVERIFY(oldMaximum > 0.0);
+        QVERIFY(timeline->setProperty("contentX", oldMaximum));
+        QCoreApplication::processEvents();
+
+        for (int expected = 7; expected >= 2; --expected) {
+            QVERIFY(controller.removeMeasure());
+            QCoreApplication::processEvents();
+            QCOMPARE(controller.composition()->measureCount(), expected);
+            const qreal newMaximum = qMax(
+                0.0, timeline->property("contentWidth").toReal() - timeline->width());
+            QVERIFY2(timeline->property("contentX").toReal() <= newMaximum + 0.5,
+                     qPrintable(QStringLiteral(
+                         "contentX %1 exceeds maximum %2 at %3 measures and %4x%5")
+                                    .arg(timeline->property("contentX").toReal())
+                                    .arg(newMaximum).arg(expected)
+                                    .arg(size.width()).arg(size.height())));
+            QVERIFY(timeline->property("contentX").toReal() >= 0.0);
+        }
+    }
 }
 
 void QmlSmokeTest::showsSelectedToolBesidePointerOnlyOverGrid()

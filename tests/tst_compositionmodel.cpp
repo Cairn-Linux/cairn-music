@@ -32,6 +32,8 @@ class CompositionModelTest : public QObject
 private slots:
     void startsWithTwoEmptyMeasures();
     void growsToEightMeasuresButNoFurther();
+    void refusesToRemoveEitherMinimumMeasure();
+    void removesFinalMeasureEventsAsOneExactlyUndoableEdit();
     void placesPitchedTokenWithItsOwnSound();
     void rejectsOutOfRangePitchedPlacement();
     void placesPercussionInSeparateKind();
@@ -73,6 +75,33 @@ void CompositionModelTest::growsToEightMeasuresButNoFurther()
 
     QVERIFY(!model.addMeasure());
     QCOMPARE(model.measureCount(), 8);
+}
+
+void CompositionModelTest::refusesToRemoveEitherMinimumMeasure()
+{
+    CompositionModel model;
+
+    QVERIFY(!model.removeLastMeasure());
+    QCOMPARE(model.measureCount(), 2);
+    QVERIFY(!model.canUndo());
+}
+
+void CompositionModelTest::removesFinalMeasureEventsAsOneExactlyUndoableEdit()
+{
+    CompositionModel model;
+    QVERIFY(model.addMeasure());
+    QVERIFY(model.placePitched(2, 1, 0));
+    QVERIFY(model.placePitched(8, 6, 3));
+    QVERIFY(model.placePercussion(11, 1));
+    const QJsonObject beforeRemoval = model.toJson();
+
+    QVERIFY(model.removeLastMeasure());
+    QCOMPARE(model.measureCount(), 2);
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.data(model.index(0), CompositionModel::StepRole).toInt(), 2);
+
+    QVERIFY(model.undo());
+    QCOMPARE(model.toJson(), beforeRemoval);
 }
 
 void CompositionModelTest::placesPitchedTokenWithItsOwnSound()

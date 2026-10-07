@@ -704,6 +704,8 @@ void QmlSmokeTest::previewThenPlayUsesCompositionStateThroughQml()
     QVERIFY(status != nullptr);
     QVERIFY(restartBadge != nullptr);
 
+    QVERIFY(clickQuickItem(window, QStringLiteral("loopCheckBox")));
+    QVERIFY(controller.loopEnabled());
     QVERIFY(clickQuickItem(window, QStringLiteral("pitchCellMouse-0-3")));
     QVERIFY(controller.playing());
     QVERIFY(!controller.compositionPlaying());
@@ -734,7 +736,25 @@ void QmlSmokeTest::previewThenPlayUsesCompositionStateThroughQml()
         }
     }
 
-    QVERIFY(clickQuickItem(window, QStringLiteral("loopCheckBox")));
+    window->resize(supportedSizes.constFirst());
+    QCoreApplication::processEvents();
+    QCOMPARE(window->size(), supportedSizes.constFirst());
+
+    const QRectF windowRect(QPointF(0, 0), window->size());
+    const QRect clickWindowRect(QPoint(0, 0), window->size());
+    const QRectF playButtonRect = playButton->mapRectToScene(playButton->boundingRect());
+    const QPoint playClickPoint = playButton->mapToScene(
+        QPointF(playButton->width() / 2.0, playButton->height() / 2.0)).toPoint();
+    QVERIFY2(windowRect.contains(playButtonRect),
+             qPrintable(QStringLiteral("Play bounds %1,%2 %3x%4 are outside window %5x%6")
+                            .arg(playButtonRect.x()).arg(playButtonRect.y())
+                            .arg(playButtonRect.width()).arg(playButtonRect.height())
+                            .arg(window->width()).arg(window->height())));
+    QVERIFY2(clickWindowRect.contains(playClickPoint),
+             qPrintable(QStringLiteral("Play click point %1,%2 is outside window %3x%4")
+                            .arg(playClickPoint.x()).arg(playClickPoint.y())
+                            .arg(window->width()).arg(window->height())));
+
     QVERIFY(clickQuickItem(window, QStringLiteral("playButton")));
     QVERIFY(controller.compositionPlaying());
     QCOMPARE(fakeAudio->startCalls, 2);

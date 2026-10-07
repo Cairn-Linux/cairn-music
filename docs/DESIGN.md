@@ -253,6 +253,14 @@ Every edit is undoable during the current session. Whole-song playback runs
 once by default. The sole first-release loop behavior repeats the entire song.
 There are no measure or arbitrary selection loops.
 
+Any command that changes the composition first stops whole-song playback,
+discards its queued audio, and clears the playhead, active-event emphasis, loop
+count, and loop-restart notice. The edit is applied only after that reset.
+Placement and replacement may then play their ordinary one-shot preview. This
+single mutation policy applies to Undo, pitched and percussion placement or
+replacement, Eraser, Add measure, and future commands such as Clear song or
+Remove measure.
+
 Slow, Steady, and Fast are the only first-release tempo choices. Their exact BPM
 values remain an audio/user-test decision.
 

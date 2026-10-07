@@ -208,6 +208,7 @@ bool AppController::placePitched(int step, int row)
         || row < 0 || row >= 7) {
         return false;
     }
+    stopCompositionPlaybackForMutation();
     if (!m_composition.placePitched(step, row, m_selectedSound)) {
         setPitchedPlacementRejected(true);
         return false;
@@ -224,7 +225,11 @@ bool AppController::placePitched(int step, int row)
 bool AppController::placePercussion(int step)
 {
     if (m_loadFailed || m_selectedKind != QStringLiteral("percussion")
-        || !m_composition.placePercussion(step, m_selectedSound)) {
+        || step < 0 || step >= m_composition.measureCount() * m_composition.stepsPerMeasure()) {
+        return false;
+    }
+    stopCompositionPlaybackForMutation();
+    if (!m_composition.placePercussion(step, m_selectedSound)) {
         return false;
     }
     if (m_audioEnabled) {
@@ -238,7 +243,11 @@ bool AppController::placePercussion(int step)
 
 bool AppController::eraseAt(const QString &kind, int step, int row)
 {
-    if (m_loadFailed || !m_composition.eraseAt(kind, step, row)) {
+    if (m_loadFailed) {
+        return false;
+    }
+    stopCompositionPlaybackForMutation();
+    if (!m_composition.eraseAt(kind, step, row)) {
         return false;
     }
     return save();
@@ -246,7 +255,11 @@ bool AppController::eraseAt(const QString &kind, int step, int row)
 
 bool AppController::addMeasure()
 {
-    if (m_loadFailed || !m_composition.addMeasure()) {
+    if (m_loadFailed || m_composition.measureCount() >= 8) {
+        return false;
+    }
+    stopCompositionPlaybackForMutation();
+    if (!m_composition.addMeasure()) {
         return false;
     }
     return save();
@@ -254,7 +267,11 @@ bool AppController::addMeasure()
 
 bool AppController::undo()
 {
-    if (m_loadFailed || !m_composition.undo()) {
+    if (m_loadFailed || !m_composition.canUndo()) {
+        return false;
+    }
+    stopCompositionPlaybackForMutation();
+    if (!m_composition.undo()) {
         return false;
     }
     return save();
@@ -297,6 +314,14 @@ void AppController::stop()
 {
     m_compositionPlaybackActive = false;
     m_audio->stop();
+}
+
+void AppController::stopCompositionPlaybackForMutation()
+{
+    if (!m_compositionPlaybackActive) {
+        return;
+    }
+    stop();
 }
 
 void AppController::setLoopEnabled(bool enabled)

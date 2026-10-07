@@ -104,6 +104,11 @@ private slots:
     void stopDoesNotRestartLoopingPlayback();
     void playOnceStopsAtNaturalCompletion();
     void previewInterruptsCompositionLoopPolicy();
+    void undoDuringPlaybackStopsAndClearsQueuedAudio();
+    void pitchedPlacementAndReplacementStopBeforeMutationThenPreview();
+    void percussionPlacementAndReplacementStopBeforeMutationThenPreview();
+    void eraserStopsPlaybackBeforeMutation();
+    void addMeasureStopsPlaybackBeforeMutation();
     void recoversFromOutputError();
     void idleUnderrunStopsInsteadOfRestartingLoop();
     void failedLoopRestartBecomesRecoverableError();
@@ -365,6 +370,166 @@ void AppControllerTest::previewInterruptsCompositionLoopPolicy()
     QVERIFY(!fakeAudio->playing());
     QCOMPARE(fakeAudio->startCalls, 2);
     QVERIFY(fakeAudio->resourcesReleased());
+}
+
+void AppControllerTest::undoDuringPlaybackStopsAndClearsQueuedAudio()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    controller.selectPitched(2);
+    QVERIFY(controller.placePitched(7, 4));
+    QCOMPARE(controller.composition()->rowCount(), 1);
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+    QVERIFY(controller.playing());
+    QVERIFY(!fakeAudio->resourcesReleased());
+
+    QVERIFY(controller.undo());
+
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+    QVERIFY(controller.playbackStatus().isEmpty());
+}
+
+void AppControllerTest::pitchedPlacementAndReplacementStopBeforeMutationThenPreview()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(1, 3));
+
+    bool placementSawStoppedPlayback = false;
+    connect(controller.composition(), &QAbstractItemModel::rowsAboutToBeInserted,
+            this, [&] {
+                placementSawStoppedPlayback = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1;
+            });
+    controller.play();
+    QVERIFY(controller.placePitched(6, 4));
+    QVERIFY(placementSawStoppedPlayback);
+    QVERIFY(controller.playing());
+    QCOMPARE(controller.playbackStep(), -1);
+
+    bool replacementSawStoppedPlayback = false;
+    connect(controller.composition(), &QAbstractItemModel::dataChanged,
+            this, [&] {
+                replacementSawStoppedPlayback = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1;
+            });
+    controller.play();
+    QVERIFY(controller.placePitched(1, 3));
+    QVERIFY(replacementSawStoppedPlayback);
+    QVERIFY(controller.playing());
+    QCOMPARE(controller.playbackStep(), -1);
+}
+
+void AppControllerTest::percussionPlacementAndReplacementStopBeforeMutationThenPreview()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(1));
+
+    bool placementSawStoppedPlayback = false;
+    connect(controller.composition(), &QAbstractItemModel::rowsAboutToBeInserted,
+            this, [&] {
+                placementSawStoppedPlayback = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1;
+            });
+    controller.play();
+    QVERIFY(controller.placePercussion(6));
+    QVERIFY(placementSawStoppedPlayback);
+    QVERIFY(controller.playing());
+    QCOMPARE(controller.playbackStep(), -1);
+
+    bool replacementSawStoppedPlayback = false;
+    connect(controller.composition(), &QAbstractItemModel::dataChanged,
+            this, [&] {
+                replacementSawStoppedPlayback = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1;
+            });
+    controller.play();
+    QVERIFY(controller.placePercussion(1));
+    QVERIFY(replacementSawStoppedPlayback);
+    QVERIFY(controller.playing());
+    QCOMPARE(controller.playbackStep(), -1);
+}
+
+void AppControllerTest::eraserStopsPlaybackBeforeMutation()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.selectPitched(0);
+    QVERIFY(controller.placePitched(5, 2));
+
+    bool removalSawStoppedPlayback = false;
+    connect(controller.composition(), &QAbstractItemModel::rowsAboutToBeRemoved,
+            this, [&] {
+                removalSawStoppedPlayback = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1;
+            });
+    controller.play();
+    QVERIFY(controller.eraseAt(QStringLiteral("pitched"), 5, 2));
+
+    QVERIFY(removalSawStoppedPlayback);
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+}
+
+void AppControllerTest::addMeasureStopsPlaybackBeforeMutation()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+
+    bool measureChangeSawStoppedPlayback = false;
+    connect(controller.composition(), &CompositionModel::measureCountChanged,
+            this, [&] {
+                measureChangeSawStoppedPlayback = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1;
+            });
+    controller.play();
+    QVERIFY(controller.addMeasure());
+
+    QVERIFY(measureChangeSawStoppedPlayback);
+    QCOMPARE(controller.composition()->measureCount(), 3);
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
 }
 
 void AppControllerTest::recoversFromOutputError()

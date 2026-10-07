@@ -79,6 +79,7 @@ private:
     bool save();
     bool ensureRecoveryCopy();
     void setPitchedPlacementRejected(bool rejected);
+    void stopCompositionPlaybackForMutation();
     void startPlaybackProgress();
     void resetPlaybackProgress();
     void refreshPlaybackProgress();

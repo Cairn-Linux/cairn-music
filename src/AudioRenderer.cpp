@@ -42,6 +42,7 @@ QByteArray AudioRenderer::renderPitched(int soundId, int pitchRow, int durationM
     const int frames = sampleRate * durationMs / 1000;
     QByteArray pcm(frames * int(sizeof(qint16) * 2), Qt::Uninitialized);
     const double frequency = pitchFrequency(pitchRow);
+    double bubblePhase = 0.0;
 
     for (int frame = 0; frame < frames; ++frame) {
         const double time = double(frame) / sampleRate;
@@ -66,7 +67,8 @@ QByteArray AudioRenderer::renderPitched(int soundId, int pitchRow, int durationM
             break;
         case 3: { // playful wobble
             const double wobble = 1.0 + 0.025 * std::sin(2.0 * pi * 7.0 * time);
-            value = (std::sin(2.0 * pi * frequency * wobble * time)
+            bubblePhase += 2.0 * pi * frequency * wobble / sampleRate;
+            value = (std::sin(bubblePhase)
                      + 0.22 * std::sin(2.0 * pi * frequency * 2.0 * time))
                 * attack * release * 0.8;
             break;

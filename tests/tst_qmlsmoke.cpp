@@ -138,6 +138,7 @@ private slots:
     void clearsLoopRestartNoticeForSoundPreview();
     void clearsPlaybackIndicatorsForUndoMutation();
     void playheadMovesWithScrollableTimeline();
+    void showsSelectedToolBesidePointerOnlyOverGrid();
 };
 
 void QmlSmokeTest::loadsPicturesWorkspace()
@@ -1008,6 +1009,110 @@ void QmlSmokeTest::playheadMovesWithScrollableTimeline()
     QCoreApplication::processEvents();
     const qreal after = playhead->mapToScene(QPointF()).x();
     QVERIFY(qAbs((before - after) - 120.0) < 1.0);
+}
+
+void QmlSmokeTest::showsSelectedToolBesidePointerOnlyOverGrid()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+
+    QQuickItem *indicator = findQuickItem(window->contentItem(), "activeToolIndicator");
+    QQuickItem *indicatorMark = findQuickItem(window->contentItem(), "activeToolIndicatorMark");
+    QQuickItem *pitchCell = findQuickItem(window->contentItem(), "pitchCellMouse-0-3");
+    QQuickItem *drumCell = findQuickItem(window->contentItem(), "drumCellMouse-0-0");
+    QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+    QQuickItem *eraserButton = findQuickItem(window->contentItem(), "eraserButton");
+    QQuickItem *eraserIcon = findQuickItem(window->contentItem(), "eraserIcon");
+    QVERIFY(indicator != nullptr);
+    QVERIFY(indicatorMark != nullptr);
+    QVERIFY(pitchCell != nullptr);
+    QVERIFY(drumCell != nullptr);
+    QVERIFY(timeline != nullptr);
+    QVERIFY(eraserButton != nullptr);
+    QVERIFY(eraserIcon != nullptr);
+    QVERIFY(eraserButton->width() >= 44.0 && eraserButton->height() >= 44.0);
+    QCOMPARE(pitchCell->property("cursorShape").toInt(), int(Qt::BlankCursor));
+    QCOMPARE(drumCell->property("cursorShape").toInt(), int(Qt::BlankCursor));
+
+    QAccessibleInterface *eraserAccessible = QAccessible::queryAccessibleInterface(eraserButton);
+    QVERIFY(eraserAccessible != nullptr);
+    QCOMPARE(eraserAccessible->text(QAccessible::Name), QStringLiteral("Eraser tool"));
+
+    const QStringList pitchedMarks = {QStringLiteral("▥"), QStringLiteral("◆"),
+                                      QStringLiteral("◒"), QStringLiteral("○")};
+    const QStringList percussionMarks = {QStringLiteral("●"), QStringLiteral("✦")};
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QVERIFY(timeline->setProperty("contentY", 0.0));
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+
+        const QPoint gridPoint = pitchCell->mapToScene(
+            QPointF(pitchCell->width() / 2.0, pitchCell->height() / 2.0)).toPoint();
+
+        for (int sound = 0; sound < pitchedMarks.size(); ++sound) {
+            QVERIFY(clickQuickItem(window,
+                                   QStringLiteral("pitchedSoundButton-%1").arg(sound)));
+            QTest::mouseMove(window, gridPoint);
+            QCoreApplication::processEvents();
+            QVERIFY(indicator->isVisible());
+            QCOMPARE(indicatorMark->property("text").toString(), pitchedMarks.at(sound));
+            QVERIFY(!indicator->mapRectToScene(indicator->boundingRect()).contains(gridPoint));
+        }
+
+        for (int sound = 0; sound < percussionMarks.size(); ++sound) {
+            QVERIFY(clickQuickItem(window,
+                                   QStringLiteral("percussionSoundButton-%1").arg(sound)));
+            QTest::mouseMove(window, gridPoint);
+            QCoreApplication::processEvents();
+            QVERIFY(indicator->isVisible());
+            QCOMPARE(indicatorMark->property("text").toString(), percussionMarks.at(sound));
+            QVERIFY(!indicator->mapRectToScene(indicator->boundingRect()).contains(gridPoint));
+        }
+
+        eraserButton->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(eraserButton->hasActiveFocus());
+        QTest::keyClick(window, Qt::Key_Space);
+        QCoreApplication::processEvents();
+        QVERIFY(window->property("eraseMode").toBool());
+        QTest::mouseMove(window, gridPoint);
+        QCoreApplication::processEvents();
+        QVERIFY(indicator->isVisible());
+        QVERIFY(indicator->property("eraserTool").toBool());
+        QVERIFY(eraserButton->property("checked").toBool());
+        QVERIFY(!indicator->mapRectToScene(indicator->boundingRect()).contains(gridPoint));
+
+        const qreal maximumContentY = qMax(
+            0.0, timeline->property("contentHeight").toReal() - timeline->height());
+        QVERIFY(timeline->setProperty("contentY", maximumContentY));
+        QCoreApplication::processEvents();
+        const QPoint drumPoint = drumCell->mapToScene(
+            QPointF(drumCell->width() / 2.0, drumCell->height() / 2.0)).toPoint();
+        QTest::mouseMove(window, drumPoint);
+        QCoreApplication::processEvents();
+        QVERIFY(indicator->isVisible());
+        QVERIFY(indicator->property("eraserTool").toBool());
+        QVERIFY(!indicator->mapRectToScene(indicator->boundingRect()).contains(drumPoint));
+
+        const QPoint controlPoint = eraserButton->mapToScene(
+            QPointF(eraserButton->width() / 2.0, eraserButton->height() / 2.0)).toPoint();
+        QTest::mouseMove(window, controlPoint);
+        QCoreApplication::processEvents();
+        QVERIFY(!indicator->isVisible());
+
+        // Restore a sound selection before the next size iteration.
+        QVERIFY(clickQuickItem(window, QStringLiteral("pitchedSoundButton-0")));
+    }
 }
 
 QTEST_MAIN(QmlSmokeTest)

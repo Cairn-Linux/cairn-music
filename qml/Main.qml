@@ -74,9 +74,11 @@ ApplicationWindow {
                 }
                 Label {
                     text: qsTr("Make a sound. Place a picture. Hear your song.")
+                    Layout.maximumWidth: root.width < 1004 ? 400 : 600
                     color: "#fff8ec"
                     font.pixelSize: 25
                     font.bold: true
+                    wrapMode: Text.WordWrap
                 }
             }
 
@@ -84,6 +86,7 @@ ApplicationWindow {
 
             ToolButton {
                 objectName: "undoButton"
+                Layout.minimumHeight: 44
                 text: qsTr("↶  Undo")
                 enabled: app.composition.canUndo
                 font.pixelSize: 16
@@ -93,6 +96,7 @@ ApplicationWindow {
             ToolButton {
                 id: eraserButton
                 objectName: "eraserButton"
+                Layout.minimumHeight: 44
                 text: root.eraseMode ? qsTr("✓  Eraser") : qsTr("✕  Eraser")
                 checkable: true
                 checked: root.eraseMode
@@ -103,6 +107,7 @@ ApplicationWindow {
             Button {
                 id: playButton
                 objectName: "playButton"
+                Layout.minimumHeight: 44
                 text: app.playing ? qsTr("■  Stop") : qsTr("▶  Play")
                 highlighted: true
                 font.pixelSize: 17
@@ -111,6 +116,7 @@ ApplicationWindow {
             }
             CheckBox {
                 objectName: "loopCheckBox"
+                Layout.minimumHeight: 44
                 text: qsTr("Loop")
                 font.pixelSize: 15
                 checked: app.loopEnabled
@@ -214,7 +220,7 @@ ApplicationWindow {
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 14
-                    spacing: 10
+                    spacing: 9
 
                     Label {
                         text: qsTr("SOUNDS")
@@ -230,7 +236,7 @@ ApplicationWindow {
                             required property int index
                             objectName: "pitchedSoundButton-%1".arg(index)
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 68
+                            Layout.preferredHeight: 58
                             checkable: true
                             checked: app.selectedKind === "pitched" && app.selectedSound === index
                             onClicked: {
@@ -286,7 +292,7 @@ ApplicationWindow {
                             required property int index
                             objectName: "percussionSoundButton-%1".arg(index)
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 58
+                            Layout.preferredHeight: 52
                             checkable: true
                             checked: app.selectedKind === "percussion" && app.selectedSound === index
                             onClicked: {
@@ -356,6 +362,7 @@ ApplicationWindow {
                         Item { Layout.fillWidth: true }
                         Button {
                             objectName: "addMeasureButton"
+                            Layout.minimumHeight: 44
                             text: qsTr("＋  Add measure")
                             enabled: app.composition.measureCount < 8
                             onClicked: app.addMeasure()

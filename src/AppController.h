@@ -18,6 +18,7 @@ class AppController final : public QObject
     Q_PROPERTY(int selectedSound READ selectedSound NOTIFY selectionChanged)
     Q_PROPERTY(bool loopEnabled READ loopEnabled WRITE setLoopEnabled NOTIFY loopEnabledChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
+    Q_PROPERTY(bool compositionPlaying READ compositionPlaying NOTIFY compositionPlayingChanged)
     Q_PROPERTY(int playbackStep READ playbackStep NOTIFY playbackProgressChanged)
     Q_PROPERTY(int playbackCycle READ playbackCycle NOTIFY playbackProgressChanged)
     Q_PROPERTY(QString playbackStatus READ playbackStatus NOTIFY playbackProgressChanged)
@@ -41,6 +42,7 @@ public:
     [[nodiscard]] int selectedSound() const noexcept;
     [[nodiscard]] bool loopEnabled() const noexcept;
     [[nodiscard]] bool playing() const noexcept;
+    [[nodiscard]] bool compositionPlaying() const noexcept;
     [[nodiscard]] int playbackStep() const noexcept;
     [[nodiscard]] int playbackCycle() const noexcept;
     [[nodiscard]] QString playbackStatus() const;
@@ -70,6 +72,7 @@ signals:
     void selectionChanged();
     void loopEnabledChanged();
     void playingChanged();
+    void compositionPlayingChanged();
     void playbackProgressChanged();
     void loopRestarted();
     void loadFailedChanged();
@@ -81,6 +84,7 @@ private:
     bool save();
     bool ensureRecoveryCopy();
     void setPitchedPlacementRejected(bool rejected);
+    void setCompositionPlaybackActive(bool active);
     void stopCompositionPlaybackForMutation();
     void startPlaybackProgress();
     void resetPlaybackProgress();

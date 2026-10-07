@@ -57,7 +57,7 @@ AppController::AppController(const QString &autosavePath, bool audioEnabled,
     }
     connect(m_audio.get(), &AudioEngine::playingChanged, this, [this] {
         if (!m_audio->playing()) {
-            m_compositionPlaybackActive = false;
+            setCompositionPlaybackActive(false);
             resetPlaybackProgress();
         }
         emit playingChanged();
@@ -99,6 +99,11 @@ bool AppController::loopEnabled() const noexcept
 bool AppController::playing() const noexcept
 {
     return m_audio->playing();
+}
+
+bool AppController::compositionPlaying() const noexcept
+{
+    return m_compositionPlaybackActive;
 }
 
 int AppController::playbackStep() const noexcept
@@ -168,6 +173,15 @@ void AppController::setPitchedPlacementRejected(bool rejected)
     emit pitchedPlacementRejectedChanged();
 }
 
+void AppController::setCompositionPlaybackActive(bool active)
+{
+    if (m_compositionPlaybackActive == active) {
+        return;
+    }
+    m_compositionPlaybackActive = active;
+    emit compositionPlayingChanged();
+}
+
 void AppController::selectPitched(int soundId)
 {
     if (soundId < 0 || soundId >= 4) {
@@ -178,7 +192,7 @@ void AppController::selectPitched(int soundId)
     emit selectionChanged();
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPitched(soundId, 3, 180))) {
-            m_compositionPlaybackActive = false;
+            setCompositionPlaybackActive(false);
             resetPlaybackProgress();
         }
     }
@@ -194,7 +208,7 @@ void AppController::selectPercussion(int soundId)
     emit selectionChanged();
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPercussion(soundId, 180))) {
-            m_compositionPlaybackActive = false;
+            setCompositionPlaybackActive(false);
             resetPlaybackProgress();
         }
     }
@@ -215,7 +229,7 @@ bool AppController::placePitched(int step, int row)
     }
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPitched(m_selectedSound, row, 220))) {
-            m_compositionPlaybackActive = false;
+            setCompositionPlaybackActive(false);
             resetPlaybackProgress();
         }
     }
@@ -234,7 +248,7 @@ bool AppController::placePercussion(int step)
     }
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPercussion(m_selectedSound, 180))) {
-            m_compositionPlaybackActive = false;
+            setCompositionPlaybackActive(false);
             resetPlaybackProgress();
         }
     }
@@ -327,14 +341,14 @@ void AppController::play()
     if (m_audioEnabled
         && m_audio->play(AudioRenderer::renderComposition(m_composition.toJson(), 112),
                          m_loopEnabled)) {
-        m_compositionPlaybackActive = true;
+        setCompositionPlaybackActive(true);
         startPlaybackProgress();
     }
 }
 
 void AppController::stop()
 {
-    m_compositionPlaybackActive = false;
+    setCompositionPlaybackActive(false);
     m_audio->stop();
 }
 

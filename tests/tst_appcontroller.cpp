@@ -104,6 +104,7 @@ private slots:
     void stopDoesNotRestartLoopingPlayback();
     void playOnceStopsAtNaturalCompletion();
     void previewInterruptsCompositionLoopPolicy();
+    void previewActivityIsSeparateFromCompositionPlayback();
     void undoDuringPlaybackStopsAndClearsQueuedAudio();
     void pitchedPlacementAndReplacementStopBeforeMutationThenPreview();
     void percussionPlacementAndReplacementStopBeforeMutationThenPreview();
@@ -362,9 +363,11 @@ void AppControllerTest::previewInterruptsCompositionLoopPolicy()
     controller.setLoopEnabled(true);
     controller.play();
     QVERIFY(fakeAudio->loopEnabled());
+    QVERIFY(controller.compositionPlaying());
 
     controller.selectPitched(2);
     QVERIFY(fakeAudio->playing());
+    QVERIFY(!controller.compositionPlaying());
     QVERIFY(!fakeAudio->loopEnabled());
     QCOMPARE(fakeAudio->startCalls, 2);
 
@@ -375,6 +378,37 @@ void AppControllerTest::previewInterruptsCompositionLoopPolicy()
     QVERIFY(!fakeAudio->playing());
     QCOMPARE(fakeAudio->startCalls, 2);
     QVERIFY(fakeAudio->resourcesReleased());
+}
+
+void AppControllerTest::previewActivityIsSeparateFromCompositionPlayback()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    QSignalSpy compositionPlayingChanged(
+        &controller, &AppController::compositionPlayingChanged);
+
+    controller.selectPitched(2);
+    QVERIFY(controller.playing());
+    QVERIFY(!controller.compositionPlaying());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(compositionPlayingChanged.count(), 0);
+
+    controller.play();
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(controller.playbackStep(), 0);
+    QCOMPARE(fakeAudio->startCalls, 2);
+    QCOMPARE(compositionPlayingChanged.count(), 1);
+
+    fakeAudio->finishCurrentBuffer();
+    QVERIFY(!controller.playing());
+    QVERIFY(!controller.compositionPlaying());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(compositionPlayingChanged.count(), 2);
 }
 
 void AppControllerTest::undoDuringPlaybackStopsAndClearsQueuedAudio()
@@ -421,6 +455,7 @@ void AppControllerTest::pitchedPlacementAndReplacementStopBeforeMutationThenPrev
     connect(controller.composition(), &QAbstractItemModel::rowsAboutToBeInserted,
             this, [&] {
                 placementSawStoppedPlayback = !controller.playing()
+                    && !controller.compositionPlaying()
                     && fakeAudio->resourcesReleased()
                     && controller.playbackStep() == -1;
             });
@@ -428,12 +463,14 @@ void AppControllerTest::pitchedPlacementAndReplacementStopBeforeMutationThenPrev
     QVERIFY(controller.placePitched(6, 4));
     QVERIFY(placementSawStoppedPlayback);
     QVERIFY(controller.playing());
+    QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
 
     bool replacementSawStoppedPlayback = false;
     connect(controller.composition(), &QAbstractItemModel::dataChanged,
             this, [&] {
                 replacementSawStoppedPlayback = !controller.playing()
+                    && !controller.compositionPlaying()
                     && fakeAudio->resourcesReleased()
                     && controller.playbackStep() == -1;
             });
@@ -441,6 +478,7 @@ void AppControllerTest::pitchedPlacementAndReplacementStopBeforeMutationThenPrev
     QVERIFY(controller.placePitched(1, 3));
     QVERIFY(replacementSawStoppedPlayback);
     QVERIFY(controller.playing());
+    QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
 }
 
@@ -459,6 +497,7 @@ void AppControllerTest::percussionPlacementAndReplacementStopBeforeMutationThenP
     connect(controller.composition(), &QAbstractItemModel::rowsAboutToBeInserted,
             this, [&] {
                 placementSawStoppedPlayback = !controller.playing()
+                    && !controller.compositionPlaying()
                     && fakeAudio->resourcesReleased()
                     && controller.playbackStep() == -1;
             });
@@ -466,12 +505,14 @@ void AppControllerTest::percussionPlacementAndReplacementStopBeforeMutationThenP
     QVERIFY(controller.placePercussion(6));
     QVERIFY(placementSawStoppedPlayback);
     QVERIFY(controller.playing());
+    QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
 
     bool replacementSawStoppedPlayback = false;
     connect(controller.composition(), &QAbstractItemModel::dataChanged,
             this, [&] {
                 replacementSawStoppedPlayback = !controller.playing()
+                    && !controller.compositionPlaying()
                     && fakeAudio->resourcesReleased()
                     && controller.playbackStep() == -1;
             });
@@ -479,6 +520,7 @@ void AppControllerTest::percussionPlacementAndReplacementStopBeforeMutationThenP
     QVERIFY(controller.placePercussion(1));
     QVERIFY(replacementSawStoppedPlayback);
     QVERIFY(controller.playing());
+    QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
 }
 

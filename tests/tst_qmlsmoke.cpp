@@ -90,6 +90,8 @@ public:
         return !activeBufferOpen() && bufferedByteCount() == 0;
     }
 
+    int startCalls = 0;
+
 protected:
     [[nodiscard]] bool outputAvailable() const noexcept override { return true; }
     [[nodiscard]] QAudio::Error outputError() const noexcept override
@@ -102,6 +104,7 @@ protected:
     }
     void startOutput(QIODevice *) override
     {
+        ++startCalls;
         m_outputError = QAudio::NoError;
         m_outputState = QAudio::ActiveState;
     }
@@ -134,6 +137,7 @@ private slots:
     void clearSongDialogCancelsWithoutSideEffects();
     void clearSongDialogConfirmsWithAccessibleControls();
     void controlsPlayStopAndLoopThroughQml();
+    void previewThenPlayUsesCompositionStateThroughQml();
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
     void keepsSoundLabelsReadableAtSupportedWindowSizes();
@@ -675,6 +679,102 @@ void QmlSmokeTest::controlsPlayStopAndLoopThroughQml()
     QVERIFY(clickQuickItem(root, QStringLiteral("playButton")));
     QVERIFY(!controller.playing());
     QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Play")));
+}
+
+void QmlSmokeTest::previewThenPlayUsesCompositionStateThroughQml()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QQuickItem *playButton = findQuickItem(window->contentItem(), "playButton");
+    QQuickItem *playhead = findQuickItem(window->contentItem(), "playbackPlayhead");
+    QObject *status = window->findChild<QObject *>("playbackStatus");
+    QObject *restartBadge = window->findChild<QObject *>("loopRestartBadge");
+    QVERIFY(playButton != nullptr);
+    QVERIFY(playhead != nullptr);
+    QVERIFY(status != nullptr);
+    QVERIFY(restartBadge != nullptr);
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("loopCheckBox")));
+    QVERIFY(controller.loopEnabled());
+    QVERIFY(clickQuickItem(window, QStringLiteral("pitchCellMouse-0-3")));
+    QVERIFY(controller.playing());
+    QVERIFY(!controller.compositionPlaying());
+    QCOMPARE(fakeAudio->startCalls, 1);
+    QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Play")));
+    QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(playButton);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Play song"));
+    QVERIFY(!playhead->property("visible").toBool());
+    QVERIFY(!status->property("visible").toBool());
+    QVERIFY(!restartBadge->property("visible").toBool());
+
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+        QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Play")));
+        QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Play song"));
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/preview-play-control-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
+    window->resize(supportedSizes.constFirst());
+    QCoreApplication::processEvents();
+    QCOMPARE(window->size(), supportedSizes.constFirst());
+
+    const QRectF windowRect(QPointF(0, 0), window->size());
+    const QRect clickWindowRect(QPoint(0, 0), window->size());
+    const QRectF playButtonRect = playButton->mapRectToScene(playButton->boundingRect());
+    const QPoint playClickPoint = playButton->mapToScene(
+        QPointF(playButton->width() / 2.0, playButton->height() / 2.0)).toPoint();
+    QVERIFY2(windowRect.contains(playButtonRect),
+             qPrintable(QStringLiteral("Play bounds %1,%2 %3x%4 are outside window %5x%6")
+                            .arg(playButtonRect.x()).arg(playButtonRect.y())
+                            .arg(playButtonRect.width()).arg(playButtonRect.height())
+                            .arg(window->width()).arg(window->height())));
+    QVERIFY2(clickWindowRect.contains(playClickPoint),
+             qPrintable(QStringLiteral("Play click point %1,%2 is outside window %3x%4")
+                            .arg(playClickPoint.x()).arg(playClickPoint.y())
+                            .arg(window->width()).arg(window->height())));
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("playButton")));
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(fakeAudio->startCalls, 2);
+    QVERIFY(fakeAudio->loopEnabled());
+    QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Stop")));
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Stop song"));
+    QVERIFY(playhead->property("visible").toBool());
+    QVERIFY(status->property("visible").toBool());
+
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(controller.playbackCycle(), 1);
+    QVERIFY(restartBadge->property("visible").toBool());
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("playButton")));
+    QVERIFY(!controller.compositionPlaying());
+    QVERIFY(!controller.playing());
+    QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Play")));
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Play song"));
 }
 
 void QmlSmokeTest::reopensPointerEditsFromTemporaryAutosave()

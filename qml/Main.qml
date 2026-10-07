@@ -13,10 +13,16 @@ ApplicationWindow {
     color: "#21152f"
 
     property bool eraseMode: false
+    property bool reduceMotion: false
+    readonly property bool motionEnabled: !reduceMotion
+    property bool hasInteracted: false
+    property bool inactivityHintVisible: false
+    property bool focusInteractionArmed: false
     property int cellWidth: 72
     readonly property bool compactLayout: height < 760
-    // Issue #11 can bind a real reduced-motion policy here without changing delegates.
-    readonly property bool placementAnimationsEnabled: !compactLayout
+    // Qt 6.11 has no system motion-preference API. Keep one truthful in-app
+    // policy for every animation; Qt 6.12+ can add platform preference here.
+    readonly property bool placementAnimationsEnabled: motionEnabled && !compactLayout
     property int rowHeight: compactLayout ? 44 : 52
     property int rowGap: compactLayout ? 2 : 4
     property int drumRowHeight: 44
@@ -29,7 +35,7 @@ ApplicationWindow {
                                "#38ada9", "#54a0ff", "#a66cff"]
     property var soundColors: ["#ff8f5a", "#ffd166", "#5ee1d2", "#cb8cff"]
     property var soundMarks: ["▥", "◆", "◒", "○"]
-    property var soundNames: [qsTr("Keys"), qsTr("Bell"), qsTr("Bird"), qsTr("Bubble")]
+    property var soundNames: [qsTr("Keys"), qsTr("Pluck"), qsTr("Bell"), qsTr("Bubble")]
     property var drumColors: ["#ff5d8f", "#57c7ff"]
     property var drumMarks: ["●", "✦"]
     property var drumNames: [qsTr("Thump"), qsTr("Clap")]
@@ -39,6 +45,11 @@ ApplicationWindow {
     property bool recoveryActionFailed: false
     readonly property bool toolPointerActive:
         active && Qt.application.state === Qt.ApplicationActive
+
+    onActiveFocusItemChanged: {
+        if (focusInteractionArmed && activeFocusItem)
+            markInteraction()
+    }
 
 
     component EraserGlyph: Item {
@@ -89,6 +100,62 @@ ApplicationWindow {
         return placed
     }
 
+    function markInteraction() {
+        hasInteracted = true
+        inactivityHintVisible = false
+        inactivityTimer.stop()
+    }
+
+    function showInactivityGuidance() {
+        if (!hasInteracted)
+            inactivityHintVisible = true
+    }
+
+    function activatePitchCell(step, pitch) {
+        markInteraction()
+        if (eraseMode)
+            app.eraseAt("pitched", step, pitch)
+        else if (app.selectedKind === "pitched")
+            placePitchedAt(step, pitch)
+        else if (app.selectedKind === "percussion")
+            showDrumPlacementGuidance()
+    }
+
+    function activateDrumCell(step, drumRow) {
+        markInteraction()
+        if (eraseMode)
+            app.eraseAt("percussion", step, drumRow)
+        else if (app.selectedKind === "percussion" && app.selectedSound === drumRow) {
+            clearPlacementFeedback()
+            app.placePercussion(step)
+        } else if (app.selectedKind === "percussion") {
+            showDrumPlacementGuidance()
+        }
+    }
+
+    function revealTimelineItem(item) {
+        const position = item.mapToItem(canvas, 0, 0)
+        const padding = 4
+        const left = position.x - padding
+        const right = position.x + item.width + padding
+        const top = position.y - padding
+        const bottom = position.y + item.height + padding
+        const maximumX = Math.max(0, timeline.contentWidth - timeline.width)
+        const maximumY = Math.max(0, timeline.contentHeight - timeline.height)
+        let nextX = timeline.contentX
+        let nextY = timeline.contentY
+        if (left < nextX)
+            nextX = left
+        else if (right > nextX + timeline.width)
+            nextX = right - timeline.width
+        if (top < nextY)
+            nextY = top
+        else if (bottom > nextY + timeline.height)
+            nextY = bottom - timeline.height
+        timeline.contentX = Math.max(0, Math.min(maximumX, nextX))
+        timeline.contentY = Math.max(0, Math.min(maximumY, nextY))
+    }
+
     function showPlacementFeedback(message) {
         placementFeedbackMessage = message
         placementFeedbackVisible = true
@@ -111,6 +178,23 @@ ApplicationWindow {
         repeat: false
         onTriggered: root.placementFeedbackVisible = false
     }
+
+    Timer {
+        id: inactivityTimer
+        interval: 6000
+        repeat: false
+        onTriggered: root.showInactivityGuidance()
+    }
+
+    Timer {
+        id: focusInteractionArmTimer
+        interval: 250
+        repeat: false
+        running: true
+        onTriggered: root.focusInteractionArmed = true
+    }
+
+    Component.onCompleted: inactivityTimer.start()
 
     Timer {
         id: loopRestartNoticeTimer
@@ -149,6 +233,7 @@ ApplicationWindow {
                 text: qsTr("Cancel")
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
                 Accessible.name: qsTr("Cancel clearing song")
+                onClicked: root.markInteraction()
             }
             Button {
                 objectName: "confirmClearSongButton"
@@ -157,6 +242,7 @@ ApplicationWindow {
                 highlighted: true
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
                 Accessible.name: qsTr("Confirm Clear Song")
+                onClicked: root.markInteraction()
             }
             onRejected: clearSongDialog.reject()
             onAccepted: {
@@ -211,7 +297,10 @@ ApplicationWindow {
                 text: qsTr("↶  Undo")
                 enabled: app.composition.canUndo
                 font.pixelSize: 16
-                onClicked: app.undo()
+                onClicked: {
+                    root.markInteraction()
+                    app.undo()
+                }
                 Accessible.name: qsTr("Undo last change")
             }
             ToolButton {
@@ -223,7 +312,10 @@ ApplicationWindow {
                 checkable: true
                 checked: root.eraseMode
                 font.pixelSize: 16
-                onClicked: root.eraseMode = checked
+                onClicked: {
+                    root.markInteraction()
+                    root.eraseMode = checked
+                }
                 Accessible.name: qsTr("Eraser tool")
 
                 contentItem: Row {
@@ -250,7 +342,10 @@ ApplicationWindow {
                 text: app.compositionPlaying ? qsTr("■  Stop") : qsTr("▶  Play")
                 highlighted: true
                 font.pixelSize: 17
-                onClicked: app.compositionPlaying ? app.stop() : app.play()
+                onClicked: {
+                    root.markInteraction()
+                    app.compositionPlaying ? app.stop() : app.play()
+                }
                 Accessible.name: app.compositionPlaying ? qsTr("Stop song") : qsTr("Play song")
             }
             CheckBox {
@@ -259,7 +354,10 @@ ApplicationWindow {
                 text: qsTr("Loop")
                 font.pixelSize: 15
                 checked: app.loopEnabled
-                onToggled: app.loopEnabled = checked
+                onToggled: {
+                    root.markInteraction()
+                    app.loopEnabled = checked
+                }
                 Accessible.name: qsTr("Loop whole song")
             }
         }
@@ -293,20 +391,23 @@ ApplicationWindow {
                     Repeater {
                         model: 4
                         delegate: Button {
+                            id: pitchedSoundButton
                             required property int index
                             objectName: "pitchedSoundButton-%1".arg(index)
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 58
+                            Layout.minimumHeight: 44
+                            Layout.preferredHeight: root.compactLayout ? 50 : 58
                             checkable: true
                             checked: app.selectedKind === "pitched" && app.selectedSound === index
                             onClicked: {
+                                root.markInteraction()
                                 root.eraseMode = false
                                 app.selectPitched(index)
                             }
                             Accessible.name: root.soundNames[index]
 
                             contentItem: Row {
-                                spacing: 12
+                                spacing: 10
                                 anchors.centerIn: parent
                                 Rectangle {
                                     width: 38
@@ -327,6 +428,16 @@ ApplicationWindow {
                                     color: "#3a2948"
                                     font.pixelSize: 18
                                     font.bold: true
+                                }
+                                Text {
+                                    objectName: "pitchedSelectionMark-%1".arg(index)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: pitchedSoundButton.checked
+                                    text: "✓"
+                                    color: "#3a2948"
+                                    font.pixelSize: 20
+                                    font.bold: true
+                                    Accessible.ignored: true
                                 }
                             }
                         }
@@ -349,20 +460,23 @@ ApplicationWindow {
                     Repeater {
                         model: 2
                         delegate: Button {
+                            id: percussionSoundButton
                             required property int index
                             objectName: "percussionSoundButton-%1".arg(index)
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 52
+                            Layout.minimumHeight: 44
+                            Layout.preferredHeight: root.compactLayout ? 46 : 52
                             checkable: true
                             checked: app.selectedKind === "percussion" && app.selectedSound === index
                             onClicked: {
+                                root.markInteraction()
                                 root.eraseMode = false
                                 app.selectPercussion(index)
                             }
                             Accessible.name: root.drumNames[index]
 
                             contentItem: Row {
-                                spacing: 12
+                                spacing: 10
                                 anchors.centerIn: parent
                                 Rectangle {
                                     width: 34
@@ -384,8 +498,33 @@ ApplicationWindow {
                                     font.pixelSize: 18
                                     font.bold: true
                                 }
+                                Text {
+                                    objectName: "percussionSelectionMark-%1".arg(index)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: percussionSoundButton.checked
+                                    text: "✓"
+                                    color: "#3a2948"
+                                    font.pixelSize: 20
+                                    font.bold: true
+                                    Accessible.ignored: true
+                                }
                             }
                         }
+                    }
+
+                    CheckBox {
+                        id: reduceMotionCheckBox
+                        objectName: "reduceMotionCheckBox"
+                        Layout.fillWidth: true
+                        Layout.minimumHeight: 44
+                        text: qsTr("Reduce motion")
+                        font.pixelSize: 14
+                        checked: root.reduceMotion
+                        onClicked: {
+                            root.markInteraction()
+                            root.reduceMotion = checked
+                        }
+                        Accessible.name: qsTr("Reduce motion")
                     }
 
                     Item { Layout.fillHeight: true }
@@ -474,7 +613,10 @@ ApplicationWindow {
                             Layout.minimumWidth: 44
                             Layout.minimumHeight: 44
                             text: qsTr("Clear Song")
-                            onClicked: clearSongDialog.open()
+                            onClicked: {
+                                root.markInteraction()
+                                clearSongDialog.open()
+                            }
                             Accessible.name: qsTr("Clear Song")
                         }
                         Button {
@@ -483,7 +625,10 @@ ApplicationWindow {
                             Layout.minimumHeight: 44
                             text: qsTr("−  Remove measure")
                             enabled: app.composition.measureCount > 2
-                            onClicked: app.removeMeasure()
+                            onClicked: {
+                                root.markInteraction()
+                                app.removeMeasure()
+                            }
                             Accessible.name: qsTr("Remove final measure")
                         }
                         Button {
@@ -492,7 +637,10 @@ ApplicationWindow {
                             Layout.minimumHeight: 44
                             text: qsTr("＋  Add measure")
                             enabled: app.composition.measureCount < 8
-                            onClicked: app.addMeasure()
+                            onClicked: {
+                                root.markInteraction()
+                                app.addMeasure()
+                            }
                             Accessible.name: qsTr("Add one measure")
                         }
                     }
@@ -545,8 +693,11 @@ ApplicationWindow {
                                         color: Qt.rgba(root.pitchColors[pitch].r,
                                                        root.pitchColors[pitch].g,
                                                        root.pitchColors[pitch].b, 0.13)
-                                        border.color: stepIndex % 4 === 0 ? "#c6a860" : "#decda9"
-                                        border.width: stepIndex % 4 === 0 ? 2 : 1
+                                        border.color: pitchCellMouse.activeFocus
+                                            ? "#2b1a3d"
+                                            : stepIndex % 4 === 0 ? "#c6a860" : "#decda9"
+                                        border.width: pitchCellMouse.activeFocus
+                                            ? 4 : stepIndex % 4 === 0 ? 2 : 1
 
                                         Rectangle {
                                             anchors.left: parent.left
@@ -559,19 +710,60 @@ ApplicationWindow {
                                             opacity: 0.7
                                         }
 
+                                        Rectangle {
+                                            id: inactivityHint
+                                            objectName: parent.stepIndex === 0 && parent.pitch === 3
+                                                ? "inactivityHint" : ""
+                                            property real animatedOpacity: 0.45
+                                            anchors.fill: parent
+                                            anchors.margins: 3
+                                            visible: root.inactivityHintVisible
+                                                && parent.stepIndex === 0 && parent.pitch === 3
+                                            radius: 10
+                                            color: "transparent"
+                                            border.color: "#5b3e73"
+                                            border.width: 4
+                                            opacity: root.motionEnabled ? animatedOpacity : 1.0
+                                            z: 2
+                                            Accessible.ignored: true
+
+                                            SequentialAnimation on animatedOpacity {
+                                                objectName: "inactivityHintAnimation"
+                                                running: inactivityHint.visible && root.motionEnabled
+                                                loops: Animation.Infinite
+                                                NumberAnimation { to: 1.0; duration: 450 }
+                                                NumberAnimation { to: 0.45; duration: 450 }
+                                            }
+                                        }
+
                                         MouseArea {
+                                            id: pitchCellMouse
                                             objectName: "pitchCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.pitch)
                                             anchors.fill: parent
-                                            cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
-                                            onClicked: {
-                                                if (root.eraseMode)
-                                                    app.eraseAt("pitched", parent.stepIndex, parent.pitch)
-                                                else if (app.selectedKind === "pitched")
-                                                    root.placePitchedAt(parent.stepIndex, parent.pitch)
-                                                else if (app.selectedKind === "percussion")
-                                                    root.showDrumPlacementGuidance()
+                                            activeFocusOnTab: true
+                                            onActiveFocusChanged: {
+                                                if (activeFocus)
+                                                    root.revealTimelineItem(this)
                                             }
+                                            cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: root.eraseMode
+                                                ? qsTr("Erase pitch %1 on beat %2")
+                                                      .arg(parent.pitch + 1).arg(parent.stepIndex + 1)
+                                                : app.selectedKind === "pitched"
+                                                  ? qsTr("Place %1 on pitch %2, beat %3")
+                                                        .arg(root.soundNames[app.selectedSound])
+                                                        .arg(parent.pitch + 1).arg(parent.stepIndex + 1)
+                                                  : qsTr("Pitch %1, beat %2")
+                                                        .arg(parent.pitch + 1).arg(parent.stepIndex + 1)
+                                            Accessible.onPressAction:
+                                                root.activatePitchCell(parent.stepIndex, parent.pitch)
+                                            onClicked: root.activatePitchCell(parent.stepIndex, parent.pitch)
+                                            Keys.onSpacePressed:
+                                                root.activatePitchCell(parent.stepIndex, parent.pitch)
+                                            Keys.onReturnPressed:
+                                                root.activatePitchCell(parent.stepIndex, parent.pitch)
                                         }
                                     }
                                 }
@@ -608,8 +800,11 @@ ApplicationWindow {
                                         color: Qt.rgba(root.drumColors[drumRow].r,
                                                        root.drumColors[drumRow].g,
                                                        root.drumColors[drumRow].b, 0.15)
-                                        border.color: stepIndex % 4 === 0 ? "#9a6c82" : "#d8b8bf"
-                                        border.width: stepIndex % 4 === 0 ? 2 : 1
+                                        border.color: drumCellMouse.activeFocus
+                                            ? "#2b1a3d"
+                                            : stepIndex % 4 === 0 ? "#9a6c82" : "#d8b8bf"
+                                        border.width: drumCellMouse.activeFocus
+                                            ? 4 : stepIndex % 4 === 0 ? 2 : 1
 
                                         Text {
                                             anchors.centerIn: parent
@@ -620,22 +815,32 @@ ApplicationWindow {
                                         }
 
                                         MouseArea {
+                                            id: drumCellMouse
                                             objectName: "drumCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.drumRow)
                                             anchors.fill: parent
-                                            cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
-                                            onClicked: {
-                                                if (root.eraseMode)
-                                                    app.eraseAt("percussion", parent.stepIndex,
-                                                                parent.drumRow)
-                                                else if (app.selectedKind === "percussion"
-                                                         && app.selectedSound === parent.drumRow) {
-                                                    root.clearPlacementFeedback()
-                                                    app.placePercussion(parent.stepIndex)
-                                                } else if (app.selectedKind === "percussion") {
-                                                    root.showDrumPlacementGuidance()
-                                                }
+                                            activeFocusOnTab: true
+                                            onActiveFocusChanged: {
+                                                if (activeFocus)
+                                                    root.revealTimelineItem(this)
                                             }
+                                            cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: root.eraseMode
+                                                ? qsTr("Erase %1 on beat %2")
+                                                      .arg(root.drumNames[parent.drumRow])
+                                                      .arg(parent.stepIndex + 1)
+                                                : qsTr("%1 drum row, beat %2")
+                                                      .arg(root.drumNames[parent.drumRow])
+                                                      .arg(parent.stepIndex + 1)
+                                            Accessible.onPressAction:
+                                                root.activateDrumCell(parent.stepIndex, parent.drumRow)
+                                            onClicked:
+                                                root.activateDrumCell(parent.stepIndex, parent.drumRow)
+                                            Keys.onSpacePressed:
+                                                root.activateDrumCell(parent.stepIndex, parent.drumRow)
+                                            Keys.onReturnPressed:
+                                                root.activateDrumCell(parent.stepIndex, parent.drumRow)
                                         }
                                     }
                                 }
@@ -723,22 +928,37 @@ ApplicationWindow {
                                         objectName: parent.pitched
                                             ? "pitchedTokenMouse-%1-%2"
                                                   .arg(parent.step).arg(parent.pitchRow)
-                                            : ""
-                                        anchors.fill: parent
-                                        cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
-                                        onClicked: {
-                                            if (root.eraseMode)
-                                                app.eraseAt(parent.kind, parent.step, parent.pitchRow)
-                                            else if (parent.pitched && app.selectedKind === "pitched")
-                                                root.placePitchedAt(parent.step, parent.pitchRow)
-                                            else if (!parent.pitched && app.selectedKind === "percussion"
-                                                     && app.selectedSound === parent.pitchRow) {
-                                                root.clearPlacementFeedback()
-                                                app.placePercussion(parent.step)
-                                            } else if (app.selectedKind === "percussion") {
-                                                root.showDrumPlacementGuidance()
-                                            }
+                                            : "percussionTokenMouse-%1-%2"
+                                                  .arg(parent.step).arg(parent.pitchRow)
+                                        anchors.centerIn: parent
+                                        width: Math.max(44, parent.width)
+                                        height: Math.max(44, parent.height)
+                                        activeFocusOnTab: true
+                                        onActiveFocusChanged: {
+                                            if (activeFocus)
+                                                root.revealTimelineItem(this)
                                         }
+                                        cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
+                                        Accessible.role: Accessible.Button
+                                        Accessible.name: parent.pitched
+                                            ? qsTr("Placed %1 on pitch %2, beat %3")
+                                                  .arg(root.soundNames[parent.soundId])
+                                                  .arg(parent.pitchRow + 1).arg(parent.step + 1)
+                                            : qsTr("Placed %1 on beat %2")
+                                                  .arg(root.drumNames[parent.soundId])
+                                                  .arg(parent.step + 1)
+                                        Accessible.onPressAction: parent.pitched
+                                            ? root.activatePitchCell(parent.step, parent.pitchRow)
+                                            : root.activateDrumCell(parent.step, parent.pitchRow)
+                                        onClicked: parent.pitched
+                                            ? root.activatePitchCell(parent.step, parent.pitchRow)
+                                            : root.activateDrumCell(parent.step, parent.pitchRow)
+                                        Keys.onSpacePressed: parent.pitched
+                                            ? root.activatePitchCell(parent.step, parent.pitchRow)
+                                            : root.activateDrumCell(parent.step, parent.pitchRow)
+                                        Keys.onReturnPressed: parent.pitched
+                                            ? root.activatePitchCell(parent.step, parent.pitchRow)
+                                            : root.activateDrumCell(parent.step, parent.pitchRow)
                                     }
                                 }
                             }
@@ -988,8 +1208,11 @@ ApplicationWindow {
             Button {
                 objectName: "recoveryActionButton"
                 Layout.alignment: Qt.AlignHCenter
+                Layout.minimumWidth: 44
+                Layout.minimumHeight: 44
                 text: qsTr("Keep it safe and start a new song")
                 onClicked: {
+                    root.markInteraction()
                     root.recoveryActionFailed = false
                     if (!app.preserveFailedAutosaveAndStartNew())
                         root.recoveryActionFailed = true

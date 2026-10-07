@@ -102,9 +102,28 @@ bool clickQuickItem(QObject *root, const QString &objectName)
     if (!window || !item || !item->isVisible()) {
         return false;
     }
-    const QPoint point = item->mapToScene(
-        QPointF(item->width() / 2.0, item->height() / 2.0)).toPoint();
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
+
+    const QRectF sceneBounds = item->mapRectToScene(item->boundingRect());
+    const QPointF scenePoint = item->mapToScene(item->boundingRect().center());
+    const QRectF visibleWindow(QPointF(0, 0), QSizeF(window->width(), window->height()));
+    if (sceneBounds.isEmpty() || !visibleWindow.contains(sceneBounds)
+        || !sceneBounds.contains(scenePoint) || !visibleWindow.contains(scenePoint)) {
+        return false;
+    }
+
+    for (QQuickItem *ancestor = item->parentItem(); ancestor;
+         ancestor = ancestor->parentItem()) {
+        if (ancestor->objectName() != QStringLiteral("timeline")) {
+            continue;
+        }
+        const QRectF viewport = ancestor->mapRectToScene(ancestor->boundingRect());
+        if (!viewport.contains(sceneBounds) || !viewport.contains(scenePoint)) {
+            return false;
+        }
+        break;
+    }
+
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scenePoint.toPoint());
     QCoreApplication::processEvents();
     return true;
 }
@@ -179,6 +198,10 @@ private slots:
     void previewThenPlayUsesCompositionStateThroughQml();
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
+    void exposesCompositionCellsToKeyboardAndAccessibility();
+    void revealsFocusedCompositionCellsInViewport();
+    void offersReducedMotionAndTruthfulInactivityGuidance();
+    void showsNonColorSelectionCuesAndHonestSoundLabels();
     void keepsSoundLabelsReadableAtSupportedWindowSizes();
     void keepsEveryCompositionLaneVisibleAtSupportedWindowSizes();
     void guidesSelectedDrumToItsVisibleRowThroughPointerPaths();
@@ -321,8 +344,11 @@ void QmlSmokeTest::reportsRecoveryActionFailureAndClearsItAfterRetry()
 
     QObject *popup = window->findChild<QObject *>("loadFailurePopup");
     QQuickItem *failure = window->findChild<QQuickItem *>("recoveryActionFailure");
+    QQuickItem *recoveryButton = findQuickItem(window->contentItem(), "recoveryActionButton");
     QVERIFY(popup != nullptr);
     QVERIFY(failure != nullptr);
+    QVERIFY(recoveryButton != nullptr);
+    QVERIFY(recoveryButton->width() >= 44.0 && recoveryButton->height() >= 44.0);
     QVERIFY(popup->property("visible").toBool());
     QVERIFY(!failure->isVisible());
 
@@ -1011,9 +1037,9 @@ void QmlSmokeTest::exposesKeyboardFocusAndAccessibleControlNames()
          QAccessible::Button},
         {QStringLiteral("pitchedSoundButton-0"), QStringLiteral("Keys"),
          QAccessible::CheckBox},
-        {QStringLiteral("pitchedSoundButton-1"), QStringLiteral("Bell"),
+        {QStringLiteral("pitchedSoundButton-1"), QStringLiteral("Pluck"),
          QAccessible::CheckBox},
-        {QStringLiteral("pitchedSoundButton-2"), QStringLiteral("Bird"),
+        {QStringLiteral("pitchedSoundButton-2"), QStringLiteral("Bell"),
          QAccessible::CheckBox},
         {QStringLiteral("pitchedSoundButton-3"), QStringLiteral("Bubble"),
          QAccessible::CheckBox},
@@ -1043,6 +1069,338 @@ void QmlSmokeTest::exposesKeyboardFocusAndAccessibleControlNames()
     QCoreApplication::processEvents();
     QCOMPARE(controller.selectedKind(), QStringLiteral("pitched"));
     QCOMPARE(controller.selectedSound(), 3);
+
+    QQuickItem *eraser = findQuickItem(window->contentItem(), "eraserButton");
+    QVERIFY(eraser != nullptr);
+    eraser->forceActiveFocus(Qt::TabFocusReason);
+    const QStringList expectedTabOrder = {
+        QStringLiteral("playButton"),
+        QStringLiteral("loopCheckBox"),
+        QStringLiteral("pitchedSoundButton-0"),
+        QStringLiteral("pitchedSoundButton-1"),
+        QStringLiteral("pitchedSoundButton-2"),
+        QStringLiteral("pitchedSoundButton-3"),
+        QStringLiteral("percussionSoundButton-0"),
+        QStringLiteral("percussionSoundButton-1"),
+        QStringLiteral("reduceMotionCheckBox"),
+        QStringLiteral("clearSongButton"),
+        QStringLiteral("addMeasureButton"),
+        QStringLiteral("pitchCellMouse-0-6"),
+    };
+    for (const QString &objectName : expectedTabOrder) {
+        QTest::keyClick(window, Qt::Key_Tab);
+        QCoreApplication::processEvents();
+        QQuickItem *focused = window->activeFocusItem();
+        QVERIFY2(focused != nullptr, qPrintable(objectName));
+        QCOMPARE(focused->objectName(), objectName);
+    }
+}
+
+void QmlSmokeTest::exposesCompositionCellsToKeyboardAndAccessibility()
+{
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppController controller(directory.filePath("autosave.json"), false);
+
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+        QVERIFY(window != nullptr);
+        window->resize(size);
+        QCoreApplication::processEvents();
+
+        QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+        QQuickItem *pitchCell = findQuickItem(window->contentItem(), "pitchCellMouse-0-3");
+        QQuickItem *drumCell = findQuickItem(window->contentItem(), "drumCellMouse-0-0");
+        QVERIFY(timeline != nullptr);
+        QVERIFY(pitchCell != nullptr);
+        QVERIFY(drumCell != nullptr);
+
+        const QRectF viewportRect = timeline->mapRectToScene(timeline->boundingRect());
+        const QRectF windowRect(QPointF(0, 0), size);
+        for (QQuickItem *cell : {pitchCell, drumCell}) {
+            const QRectF cellRect = cell->mapRectToScene(cell->boundingRect());
+            const QPointF clickPoint = cell->mapToScene(cell->boundingRect().center());
+            QVERIFY2(viewportRect.contains(cellRect), qPrintable(cell->objectName()));
+            QVERIFY2(windowRect.contains(cellRect), qPrintable(cell->objectName()));
+            QVERIFY2(cellRect.contains(clickPoint), qPrintable(cell->objectName()));
+            QVERIFY2(windowRect.contains(clickPoint), qPrintable(cell->objectName()));
+            QVERIFY2(cellRect.width() >= 44.0 && cellRect.height() >= 44.0,
+                     qPrintable(cell->objectName()));
+            QVERIFY2(cell->property("activeFocusOnTab").toBool(),
+                     qPrintable(cell->objectName()));
+            QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(cell);
+            QVERIFY2(accessible != nullptr, qPrintable(cell->objectName()));
+            QCOMPARE(accessible->role(), QAccessible::Button);
+            QVERIFY2(!accessible->text(QAccessible::Name).trimmed().isEmpty(),
+                     qPrintable(cell->objectName()));
+        }
+
+        QAccessibleInterface *pitchAccessible =
+            QAccessible::queryAccessibleInterface(pitchCell);
+        QVERIFY(pitchAccessible != nullptr);
+        QAccessibleActionInterface *pitchAction = pitchAccessible->actionInterface();
+        QVERIFY(pitchAction != nullptr);
+        QVERIFY(pitchAction->actionNames().contains(QAccessibleActionInterface::pressAction()));
+        pitchAction->doAction(QAccessibleActionInterface::pressAction());
+        QCoreApplication::processEvents();
+        QCOMPARE(controller.composition()->rowCount(), 1);
+
+        pitchCell->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(pitchCell->hasActiveFocus());
+        QTest::keyClick(window, Qt::Key_Space);
+        QCoreApplication::processEvents();
+        QCOMPARE(controller.composition()->rowCount(), 1);
+        const QModelIndex placed = controller.composition()->index(0);
+        QCOMPARE(controller.composition()->data(placed, CompositionModel::StepRole).toInt(), 0);
+        QCOMPARE(controller.composition()->data(placed, CompositionModel::PitchRowRole).toInt(), 3);
+        QQuickItem *pitchedToken = findQuickItem(window->contentItem(), "pitchedTokenMouse-0-3");
+        QVERIFY(pitchedToken != nullptr);
+        const QRectF pitchedTokenRect = pitchedToken->mapRectToScene(pitchedToken->boundingRect());
+        QVERIFY(viewportRect.contains(pitchedTokenRect));
+        QVERIFY(windowRect.contains(pitchedTokenRect));
+        QVERIFY(pitchedTokenRect.width() >= 44.0 && pitchedTokenRect.height() >= 44.0);
+        QAccessibleInterface *pitchedTokenAccessible =
+            QAccessible::queryAccessibleInterface(pitchedToken);
+        QVERIFY(pitchedTokenAccessible != nullptr);
+        QCOMPARE(pitchedTokenAccessible->role(), QAccessible::Button);
+        QVERIFY(!pitchedTokenAccessible->text(QAccessible::Name).trimmed().isEmpty());
+        QAccessibleActionInterface *pitchedTokenAction =
+            pitchedTokenAccessible->actionInterface();
+        QVERIFY(pitchedTokenAction != nullptr);
+        QVERIFY(pitchedTokenAction->actionNames().contains(
+            QAccessibleActionInterface::pressAction()));
+        pitchedTokenAction->doAction(QAccessibleActionInterface::pressAction());
+        QCoreApplication::processEvents();
+        QCOMPARE(controller.composition()->rowCount(), 1);
+
+        QVERIFY(clickQuickItem(window, QStringLiteral("percussionSoundButton-0")));
+        QAccessibleInterface *drumAccessible =
+            QAccessible::queryAccessibleInterface(drumCell);
+        QVERIFY(drumAccessible != nullptr);
+        QAccessibleActionInterface *drumAction = drumAccessible->actionInterface();
+        QVERIFY(drumAction != nullptr);
+        QVERIFY(drumAction->actionNames().contains(QAccessibleActionInterface::pressAction()));
+        drumAction->doAction(QAccessibleActionInterface::pressAction());
+        QCoreApplication::processEvents();
+        QCOMPARE(controller.composition()->rowCount(), 2);
+
+        drumCell->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(drumCell->hasActiveFocus());
+        QTest::keyClick(window, Qt::Key_Return);
+        QCoreApplication::processEvents();
+        QCOMPARE(controller.composition()->rowCount(), 2);
+        QQuickItem *percussionToken = findQuickItem(
+            window->contentItem(), "percussionTokenMouse-0-0");
+        QVERIFY(percussionToken != nullptr);
+        const QRectF percussionTokenRect =
+            percussionToken->mapRectToScene(percussionToken->boundingRect());
+        QVERIFY(viewportRect.contains(percussionTokenRect));
+        QVERIFY(windowRect.contains(percussionTokenRect));
+        QVERIFY(percussionTokenRect.width() >= 44.0 && percussionTokenRect.height() >= 44.0);
+        QAccessibleInterface *percussionTokenAccessible =
+            QAccessible::queryAccessibleInterface(percussionToken);
+        QVERIFY(percussionTokenAccessible != nullptr);
+        QCOMPARE(percussionTokenAccessible->role(), QAccessible::Button);
+        QVERIFY(!percussionTokenAccessible->text(QAccessible::Name).trimmed().isEmpty());
+        QAccessibleActionInterface *percussionTokenAction =
+            percussionTokenAccessible->actionInterface();
+        QVERIFY(percussionTokenAction != nullptr);
+        QVERIFY(percussionTokenAction->actionNames().contains(
+            QAccessibleActionInterface::pressAction()));
+        percussionTokenAction->doAction(QAccessibleActionInterface::pressAction());
+        QCoreApplication::processEvents();
+        QCOMPARE(controller.composition()->rowCount(), 2);
+    }
+}
+
+void QmlSmokeTest::revealsFocusedCompositionCellsInViewport()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+    while (controller.composition()->measureCount() < 8) {
+        QVERIFY(controller.addMeasure());
+    }
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    window->resize(900, 620);
+    QCoreApplication::processEvents();
+
+    QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+    QQuickItem *lastPitch = findQuickItem(window->contentItem(), "pitchCellMouse-31-6");
+    QQuickItem *lastDrum = findQuickItem(window->contentItem(), "drumCellMouse-31-1");
+    QVERIFY(timeline != nullptr);
+    QVERIFY(lastPitch != nullptr);
+    QVERIFY(lastDrum != nullptr);
+
+    const auto viewportRect = [timeline]() {
+        return timeline->mapRectToScene(timeline->boundingRect());
+    };
+    const auto itemRect = [](QQuickItem *item) {
+        return item->mapRectToScene(item->boundingRect());
+    };
+
+    QVERIFY(!viewportRect().contains(itemRect(lastPitch)));
+    lastPitch->forceActiveFocus(Qt::TabFocusReason);
+    QCoreApplication::processEvents();
+    QVERIFY(lastPitch->hasActiveFocus());
+    QVERIFY(viewportRect().contains(itemRect(lastPitch)));
+    QVERIFY(timeline->property("contentX").toReal() > 0.0);
+
+    QVERIFY(timeline->setProperty("contentX", 0.0));
+    QCoreApplication::processEvents();
+    QVERIFY(!viewportRect().contains(itemRect(lastDrum)));
+    lastDrum->forceActiveFocus(Qt::TabFocusReason);
+    QCoreApplication::processEvents();
+    QVERIFY(lastDrum->hasActiveFocus());
+    QVERIFY(viewportRect().contains(itemRect(lastDrum)));
+    QVERIFY(timeline->property("contentX").toReal() > 0.0);
+}
+
+void QmlSmokeTest::offersReducedMotionAndTruthfulInactivityGuidance()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+
+    QQuickItem *reduceMotion = findQuickItem(window->contentItem(), "reduceMotionCheckBox");
+    QQuickItem *hint = findQuickItem(window->contentItem(), "inactivityHint");
+    QObject *hintAnimation = hint ? hint->findChild<QObject *>("inactivityHintAnimation")
+                                  : nullptr;
+    QVERIFY(reduceMotion != nullptr);
+    QVERIFY(hint != nullptr);
+    QVERIFY(hintAnimation != nullptr);
+    QVERIFY(reduceMotion->property("activeFocusOnTab").toBool());
+    QVERIFY(reduceMotion->width() >= 44.0 && reduceMotion->height() >= 44.0);
+    QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(reduceMotion);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->role(), QAccessible::CheckBox);
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Reduce motion"));
+
+    QVERIFY(!window->property("reduceMotion").toBool());
+    QVERIFY(window->property("motionEnabled").toBool());
+    QVERIFY(window->property("placementAnimationsEnabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(window, "showInactivityGuidance", Qt::DirectConnection));
+    QCoreApplication::processEvents();
+    QVERIFY(hint->isVisible());
+    QVERIFY(hintAnimation->property("running").toBool());
+
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+        const QRectF controlRect = reduceMotion->mapRectToScene(reduceMotion->boundingRect());
+        QVERIFY(QRectF(QPointF(0, 0), size).contains(controlRect));
+        QVERIFY(controlRect.width() >= 44.0 && controlRect.height() >= 44.0);
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/inactivity-guidance-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width()).arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("reduceMotionCheckBox")));
+    QVERIFY(window->property("reduceMotion").toBool());
+    QVERIFY(!window->property("motionEnabled").toBool());
+    QVERIFY(!window->property("placementAnimationsEnabled").toBool());
+    QVERIFY(!hint->isVisible());
+    QVERIFY(!hintAnimation->property("running").toBool());
+
+    // Emulate reduced motion being selected before the idle interval; changing
+    // the setting itself correctly counts as interaction and dismisses the hint.
+    QVERIFY(window->setProperty("hasInteracted", false));
+    QVERIFY(QMetaObject::invokeMethod(window, "showInactivityGuidance", Qt::DirectConnection));
+    QCoreApplication::processEvents();
+    QVERIFY(hint->isVisible());
+    QVERIFY(!hintAnimation->property("running").toBool());
+
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+        QVERIFY(hint->isVisible());
+        QVERIFY(!hintAnimation->property("running").toBool());
+        if (!screenshotDirectory.isEmpty()) {
+            const QString path = QStringLiteral("%1/reduced-motion-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width()).arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("pitchedSoundButton-0")));
+    QVERIFY(!hint->isVisible());
+
+    // Keyboard focus navigation is activity even before a control is activated.
+    QVERIFY(window->setProperty("hasInteracted", false));
+    QTRY_VERIFY_WITH_TIMEOUT(window->property("focusInteractionArmed").toBool(), 500);
+    QQuickItem *playButton = findQuickItem(window->contentItem(), "playButton");
+    QVERIFY(playButton != nullptr);
+    playButton->forceActiveFocus(Qt::TabFocusReason);
+    QCoreApplication::processEvents();
+    QVERIFY(window->property("hasInteracted").toBool());
+    QVERIFY(QMetaObject::invokeMethod(window, "showInactivityGuidance", Qt::DirectConnection));
+    QVERIFY(!hint->isVisible());
+}
+
+void QmlSmokeTest::showsNonColorSelectionCuesAndHonestSoundLabels()
+{
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppController controller(directory.filePath("autosave.json"), false);
+
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+        QVERIFY(window != nullptr);
+        window->resize(size);
+        QCoreApplication::processEvents();
+
+        const QStringList honestNames = {QStringLiteral("Keys"), QStringLiteral("Pluck"),
+                                         QStringLiteral("Bell"), QStringLiteral("Bubble")};
+        const QRectF windowRect(QPointF(0, 0), size);
+        for (int sound = 0; sound < honestNames.size(); ++sound) {
+            const QString buttonName = QStringLiteral("pitchedSoundButton-%1").arg(sound);
+            const QString markName = QStringLiteral("pitchedSelectionMark-%1").arg(sound);
+            QQuickItem *button = findQuickItem(window->contentItem(), buttonName);
+            QQuickItem *selectionMark = findQuickItem(window->contentItem(), markName);
+            QVERIFY2(button != nullptr, qPrintable(buttonName));
+            QVERIFY2(selectionMark != nullptr, qPrintable(markName));
+            QVERIFY(clickQuickItem(window, buttonName));
+            QVERIFY(selectionMark->isVisible());
+            QCOMPARE(selectionMark->property("text").toString(), QStringLiteral("✓"));
+            QVERIFY(windowRect.contains(button->mapRectToScene(button->boundingRect())));
+            QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(button);
+            QVERIFY(accessible != nullptr);
+            QCOMPARE(accessible->text(QAccessible::Name), honestNames.at(sound));
+            QCOMPARE(accessible->state().checked, true);
+        }
+    }
 }
 
 void QmlSmokeTest::keepsSoundLabelsReadableAtSupportedWindowSizes()
@@ -1064,8 +1422,8 @@ void QmlSmokeTest::keepsSoundLabelsReadableAtSupportedWindowSizes()
     };
     const QList<LabelExpectation> labels = {
         {QStringLiteral("pitchedSoundButton-0"), QStringLiteral("Keys")},
-        {QStringLiteral("pitchedSoundButton-1"), QStringLiteral("Bell")},
-        {QStringLiteral("pitchedSoundButton-2"), QStringLiteral("Bird")},
+        {QStringLiteral("pitchedSoundButton-1"), QStringLiteral("Pluck")},
+        {QStringLiteral("pitchedSoundButton-2"), QStringLiteral("Bell")},
         {QStringLiteral("pitchedSoundButton-3"), QStringLiteral("Bubble")},
         {QStringLiteral("percussionSoundButton-0"), QStringLiteral("Thump")},
         {QStringLiteral("percussionSoundButton-1"), QStringLiteral("Clap")},

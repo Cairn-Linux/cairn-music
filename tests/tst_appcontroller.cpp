@@ -111,6 +111,9 @@ private slots:
     void addMeasureStopsPlaybackBeforeMutation();
     void removeMeasurePersistsAndUndoRestoresExactEvents();
     void removeMeasureStopsPlaybackBeforeMutation();
+    void clearSongPersistsAndUndoRestoresExactComposition();
+    void clearSongStopsPlaybackAndPreviewBeforeMutation();
+    void clearSongReportsSaveFailureWithoutLyingAboutMemoryState();
     void recoversFromOutputError();
     void idleUnderrunStopsInsteadOfRestartingLoop();
     void failedLoopRestartBecomesRecoverableError();
@@ -607,6 +610,99 @@ void AppControllerTest::removeMeasureStopsPlaybackBeforeMutation()
     QVERIFY(fakeAudio->resourcesReleased());
     QCOMPARE(controller.playbackStep(), -1);
     QCOMPARE(controller.playbackCycle(), 0);
+}
+
+void AppControllerTest::clearSongPersistsAndUndoRestoresExactComposition()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath("autosave.json");
+    AppController controller(path, false);
+    QVERIFY(controller.addMeasure());
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(8, 6));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(11));
+    const QJsonObject beforeClear = controller.composition()->toJson();
+
+    QVERIFY(controller.clearSong());
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QCOMPARE(controller.composition()->rowCount(), 0);
+
+    AppController reopened(path, false);
+    QCOMPARE(reopened.composition()->toJson(), CompositionModel().toJson());
+
+    QVERIFY(controller.undo());
+    QCOMPARE(controller.composition()->toJson(), beforeClear);
+    AppController restored(path, false);
+    QCOMPARE(restored.composition()->toJson(), beforeClear);
+}
+
+void AppControllerTest::clearSongStopsPlaybackAndPreviewBeforeMutation()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.selectPitched(2);
+    QVERIFY(controller.placePitched(7, 4));
+    QVERIFY(controller.addMeasure());
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+
+    bool resetBeforeMutation = false;
+    connect(controller.composition(), &QAbstractItemModel::modelAboutToBeReset,
+            this, [&] {
+                resetBeforeMutation = !controller.playing()
+                    && fakeAudio->resourcesReleased()
+                    && controller.playbackStep() == -1
+                    && controller.playbackCycle() == 0;
+            });
+    QVERIFY(controller.clearSong());
+    QVERIFY(resetBeforeMutation);
+    QVERIFY(controller.loopEnabled());
+
+    QVERIFY(controller.undo());
+    controller.selectPercussion(1);
+    QVERIFY(controller.playing());
+    QVERIFY(!fakeAudio->resourcesReleased());
+    QVERIFY(controller.clearSong());
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+}
+
+void AppControllerTest::clearSongReportsSaveFailureWithoutLyingAboutMemoryState()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString blockedParent = directory.filePath("blocked");
+    QFile blocker(blockedParent);
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    QVERIFY(blocker.write("not a directory") > 0);
+    blocker.close();
+
+    AppController controller(blockedParent + QStringLiteral("/autosave.json"), false);
+    QVERIFY(!controller.addMeasure());
+    controller.selectPitched(1);
+    QVERIFY(!controller.placePitched(8, 2));
+    const QJsonObject beforeClear = controller.composition()->toJson();
+
+    QVERIFY(!controller.clearSong());
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QVERIFY(controller.saveFailed());
+    QCOMPARE(controller.saveFailureMessage(),
+             QStringLiteral("Your song is here, but it is not saved yet."));
+
+    QVERIFY(!controller.undo());
+    QCOMPARE(controller.composition()->toJson(), beforeClear);
+    QVERIFY(controller.saveFailed());
 }
 
 void AppControllerTest::recoversFromOutputError()

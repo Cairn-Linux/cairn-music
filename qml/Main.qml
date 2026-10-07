@@ -14,8 +14,14 @@ ApplicationWindow {
 
     property bool eraseMode: false
     property int cellWidth: 72
-    property int rowHeight: 58
-    property int rowGap: 5
+    readonly property bool compactLayout: height < 760
+    property int rowHeight: compactLayout ? 44 : 52
+    property int rowGap: compactLayout ? 2 : 4
+    property int drumRowHeight: 44
+    readonly property int pitchLaneHeight: 7 * rowHeight + 6 * rowGap
+    readonly property int drumLaneTop: pitchLaneHeight + (compactLayout ? 6 : 20)
+    readonly property int compositionHeight:
+        drumLaneTop + 2 * drumRowHeight + rowGap + (compactLayout ? 4 : 8)
     property int totalSteps: app.composition.measureCount * app.composition.stepsPerMeasure
     property var pitchColors: ["#ff6b81", "#ff9f43", "#feca57", "#4cd137",
                                "#38ada9", "#54a0ff", "#a66cff"]
@@ -26,10 +32,11 @@ ApplicationWindow {
     property var drumMarks: ["●", "✦"]
     property var drumNames: [qsTr("Thump"), qsTr("Clap")]
     property bool placementFeedbackVisible: false
+    property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
     property bool loopRestartNoticeVisible: false
     readonly property bool toolPointerActive:
         active && Qt.application.state === Qt.ApplicationActive
-    readonly property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
+
 
     component EraserGlyph: Item {
         width: 32
@@ -72,12 +79,27 @@ ApplicationWindow {
     function placePitchedAt(step, pitch) {
         const placed = app.placePitched(step, pitch)
         if (placed || !app.pitchedPlacementRejected) {
-            placementFeedbackVisible = false
+            clearPlacementFeedback()
         } else {
-            placementFeedbackVisible = true
-            placementFeedbackTimer.restart()
+            showPlacementFeedback(qsTr("Only three sounds can play here."))
         }
         return placed
+    }
+
+    function showPlacementFeedback(message) {
+        placementFeedbackMessage = message
+        placementFeedbackVisible = true
+        placementFeedbackTimer.restart()
+    }
+
+    function clearPlacementFeedback() {
+        placementFeedbackVisible = false
+        placementFeedbackTimer.stop()
+    }
+
+    function showDrumPlacementGuidance() {
+        const drumName = drumNames[app.selectedSound]
+        showPlacementFeedback(qsTr("Put %1 in the %1 drum row.").arg(drumName))
     }
 
     Timer {
@@ -152,6 +174,7 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 24
+        anchors.bottomMargin: root.compactLayout ? 4 : 24
         spacing: 18
 
         RowLayout {
@@ -377,8 +400,8 @@ ApplicationWindow {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
-                    spacing: 10
+                    anchors.margins: root.compactLayout ? 6 : 16
+                    spacing: root.compactLayout ? 4 : 10
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -477,7 +500,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         contentWidth: Math.max(width, root.totalSteps * root.cellWidth + 20)
-                        contentHeight: 7 * (root.rowHeight + root.rowGap) + 150
+                        contentHeight: root.compositionHeight
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
 
@@ -493,7 +516,7 @@ ApplicationWindow {
                                     x: index * root.cellWidth
                                     y: 0
                                     width: 2
-                                    height: 7 * (root.rowHeight + root.rowGap)
+                                    height: root.pitchLaneHeight
                                     color: index % 4 === 0 ? "#d4b879" : "#eadcc2"
                                     opacity: index % 4 === 0 ? 0.95 : 0.65
                                 }
@@ -543,6 +566,8 @@ ApplicationWindow {
                                                     app.eraseAt("pitched", parent.stepIndex, parent.pitch)
                                                 else if (app.selectedKind === "pitched")
                                                     root.placePitchedAt(parent.stepIndex, parent.pitch)
+                                                else if (app.selectedKind === "percussion")
+                                                    root.showDrumPlacementGuidance()
                                             }
                                         }
                                     }
@@ -551,9 +576,9 @@ ApplicationWindow {
 
                             Rectangle {
                                 x: 0
-                                y: 7 * (root.rowHeight + root.rowGap) + 12
+                                y: root.pitchLaneHeight + (root.compactLayout ? 2 : 8)
                                 width: parent.width
-                                height: 4
+                                height: root.compactLayout ? 2 : 4
                                 radius: 2
                                 color: "#6e557d"
                                 opacity: 0.45
@@ -563,7 +588,7 @@ ApplicationWindow {
                                 id: drumLane
                                 objectName: "drumLane"
                                 x: 0
-                                y: 7 * (root.rowHeight + root.rowGap) + 28
+                                y: root.drumLaneTop
                                 columns: root.totalSteps
                                 rows: 2
                                 spacing: root.rowGap
@@ -575,7 +600,7 @@ ApplicationWindow {
                                         property int drumRow: Math.floor(index / root.totalSteps)
                                         property int stepIndex: index % root.totalSteps
                                         width: root.cellWidth - root.rowGap
-                                        height: 46
+                                        height: root.drumRowHeight
                                         radius: 10
                                         color: Qt.rgba(root.drumColors[drumRow].r,
                                                        root.drumColors[drumRow].g,
@@ -601,8 +626,12 @@ ApplicationWindow {
                                                     app.eraseAt("percussion", parent.stepIndex,
                                                                 parent.drumRow)
                                                 else if (app.selectedKind === "percussion"
-                                                         && app.selectedSound === parent.drumRow)
+                                                         && app.selectedSound === parent.drumRow) {
+                                                    root.clearPlacementFeedback()
                                                     app.placePercussion(parent.stepIndex)
+                                                } else if (app.selectedKind === "percussion") {
+                                                    root.showDrumPlacementGuidance()
+                                                }
                                             }
                                         }
                                     }
@@ -654,12 +683,14 @@ ApplicationWindow {
                                     required property int soundId
                                     property bool pitched: kind === "pitched"
                                     property bool sounding: app.compositionPlaying && app.playbackStep === step
+                                    property real popScale: 1.0
                                     objectName: "compositionToken-%1-%2".arg(step).arg(pitchRow)
                                     x: step * root.cellWidth + 12
                                     y: pitched
-                                       ? (6 - pitchRow) * (root.rowHeight + root.rowGap) + 9
-                                       : 7 * (root.rowHeight + root.rowGap) + 37
-                                           + pitchRow * (46 + root.rowGap)
+                                       ? (6 - pitchRow) * (root.rowHeight + root.rowGap)
+                                           + (root.rowHeight - 42) / 2
+                                       : root.drumLaneTop + 5
+                                           + pitchRow * (root.drumRowHeight + root.rowGap)
                                     width: pitched ? 42 : 40
                                     height: pitched ? 42 : 34
                                     radius: pitched ? 21 : 10
@@ -667,6 +698,7 @@ ApplicationWindow {
                                                    : root.drumColors[soundId]
                                     border.color: sounding ? "#2b1a3d" : "#ffffff"
                                     border.width: sounding ? 6 : 3
+                                    scale: root.compactLayout ? 1.0 : popScale
                                     z: 5
 
                                     Text {
@@ -678,8 +710,8 @@ ApplicationWindow {
                                         font.bold: true
                                     }
 
-                                    SequentialAnimation on scale {
-                                        running: true
+                                    SequentialAnimation on popScale {
+                                        running: !root.compactLayout
                                         NumberAnimation { to: 1.18; duration: 90 }
                                         NumberAnimation { to: 1.0; duration: 150 }
                                     }
@@ -697,8 +729,12 @@ ApplicationWindow {
                                             else if (parent.pitched && app.selectedKind === "pitched")
                                                 root.placePitchedAt(parent.step, parent.pitchRow)
                                             else if (!parent.pitched && app.selectedKind === "percussion"
-                                                     && app.selectedSound === parent.pitchRow)
+                                                     && app.selectedSound === parent.pitchRow) {
+                                                root.clearPlacementFeedback()
                                                 app.placePercussion(parent.step)
+                                            } else if (app.selectedKind === "percussion") {
+                                                root.showDrumPlacementGuidance()
+                                            }
                                         }
                                     }
                                 }

@@ -176,6 +176,8 @@ private slots:
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
     void keepsSoundLabelsReadableAtSupportedWindowSizes();
+    void keepsEveryCompositionLaneVisibleAtSupportedWindowSizes();
+    void guidesSelectedDrumToItsVisibleRowThroughPointerPaths();
     void clicksPitchedPlacementPaths();
     void handlesPitchedPlacementFeedback();
     void keepsPlacementFeedbackFromMovingWorkspace();
@@ -993,6 +995,170 @@ void QmlSmokeTest::keepsSoundLabelsReadableAtSupportedWindowSizes()
             QVERIFY2(button->width() >= 44 && button->height() >= 44,
                      qPrintable(expectation.buttonName));
         }
+    }
+}
+
+void QmlSmokeTest::keepsEveryCompositionLaneVisibleAtSupportedWindowSizes()
+{
+    const QList<QSize> supportedSizes = {
+        QSize(1180, 760),
+        QSize(900, 621),
+        QSize(900, 620),
+    };
+    for (const QSize &size : supportedSizes) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppController controller(directory.filePath("autosave.json"), false);
+        QVERIFY(controller.placePitched(0, 0));
+        QVERIFY(controller.placePitched(1, 6));
+        controller.selectPercussion(0);
+        QVERIFY(controller.placePercussion(2));
+        controller.selectPercussion(1);
+        QVERIFY(controller.placePercussion(3));
+
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+        QVERIFY(window != nullptr);
+        window->resize(size);
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+
+        QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+        QVERIFY(timeline != nullptr);
+        const QRectF viewportRect = timeline->mapRectToScene(timeline->boundingRect());
+        const QRect windowRect(QPoint(0, 0), size);
+
+        QStringList laneTargets;
+        for (int pitch = 0; pitch < 7; ++pitch) {
+            laneTargets.append(QStringLiteral("pitchCellMouse-0-%1").arg(pitch));
+        }
+        for (int drum = 0; drum < 2; ++drum) {
+            laneTargets.append(QStringLiteral("drumCellMouse-0-%1").arg(drum));
+        }
+
+        for (const QString &objectName : laneTargets) {
+            QQuickItem *target = findQuickItem(window->contentItem(), objectName);
+            QVERIFY2(target != nullptr, qPrintable(objectName));
+            const QRectF targetRect = target->mapRectToScene(target->boundingRect());
+            const QPoint clickPoint = target->mapToScene(
+                QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
+            QVERIFY2(viewportRect.contains(targetRect),
+                     qPrintable(QStringLiteral("%1 is clipped at %2x%3")
+                                    .arg(objectName).arg(size.width()).arg(size.height())));
+            QVERIFY2(windowRect.contains(clickPoint),
+                     qPrintable(QStringLiteral("%1 click point is outside the window")
+                                    .arg(objectName)));
+            QVERIFY2(targetRect.width() >= 44.0 && targetRect.height() >= 44.0,
+                     qPrintable(QStringLiteral("%1 is too small for a child pointer target")
+                                    .arg(objectName)));
+        }
+
+        const QList<QPair<QString, QString>> tokenCells = {
+            {QStringLiteral("compositionToken-0-0"), QStringLiteral("pitchCellMouse-0-0")},
+            {QStringLiteral("compositionToken-1-6"), QStringLiteral("pitchCellMouse-1-6")},
+            {QStringLiteral("compositionToken-2-0"), QStringLiteral("drumCellMouse-2-0")},
+            {QStringLiteral("compositionToken-3-1"), QStringLiteral("drumCellMouse-3-1")},
+        };
+        for (const auto &[tokenName, cellName] : tokenCells) {
+            QQuickItem *token = findQuickItem(window->contentItem(), tokenName);
+            QQuickItem *cell = findQuickItem(window->contentItem(), cellName);
+            QVERIFY2(token != nullptr, qPrintable(tokenName));
+            QVERIFY2(cell != nullptr, qPrintable(cellName));
+            const QRectF tokenRect = token->mapRectToScene(token->boundingRect());
+            const QRectF cellRect = cell->mapRectToScene(cell->boundingRect());
+            QVERIFY2(cellRect.contains(tokenRect),
+                     qPrintable(QStringLiteral("%1 [%2,%3 %4x%5] crosses %6 [%7,%8 %9x%10] at %11x%12")
+                                    .arg(tokenName)
+                                    .arg(tokenRect.x()).arg(tokenRect.y())
+                                    .arg(tokenRect.width()).arg(tokenRect.height())
+                                    .arg(cellName)
+                                    .arg(cellRect.x()).arg(cellRect.y())
+                                    .arg(cellRect.width()).arg(cellRect.height())
+                                    .arg(size.width()).arg(size.height())));
+            QVERIFY2(viewportRect.contains(tokenRect),
+                     qPrintable(QStringLiteral("%1 is clipped at %2x%3")
+                                    .arg(tokenName).arg(size.width()).arg(size.height())));
+        }
+
+        const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/composition-lanes-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+}
+
+void QmlSmokeTest::guidesSelectedDrumToItsVisibleRowThroughPointerPaths()
+{
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppController controller(directory.filePath("autosave.json"), false);
+
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+        QVERIFY(window != nullptr);
+        window->resize(size);
+        QCoreApplication::processEvents();
+
+        QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+        QQuickItem *pitchTarget = findQuickItem(window->contentItem(), "pitchCellMouse-0-3");
+        QQuickItem *wrongDrumTarget = findQuickItem(window->contentItem(), "drumCellMouse-0-1");
+        QQuickItem *correctDrumTarget = findQuickItem(window->contentItem(), "drumCellMouse-0-0");
+        QQuickItem *feedback = findQuickItem(window->contentItem(), "placementFeedback");
+        QVERIFY(timeline != nullptr);
+        QVERIFY(pitchTarget != nullptr);
+        QVERIFY(wrongDrumTarget != nullptr);
+        QVERIFY(correctDrumTarget != nullptr);
+        QVERIFY(feedback != nullptr);
+
+        const QRectF viewportRect = timeline->mapRectToScene(timeline->boundingRect());
+        const QRect windowRect(QPoint(0, 0), size);
+        for (QQuickItem *target : {pitchTarget, wrongDrumTarget, correctDrumTarget}) {
+            const QRectF targetRect = target->mapRectToScene(target->boundingRect());
+            const QPoint clickPoint = target->mapToScene(
+                QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
+            QVERIFY2(viewportRect.contains(targetRect), qPrintable(target->objectName()));
+            QVERIFY2(windowRect.contains(clickPoint), qPrintable(target->objectName()));
+        }
+
+        QVERIFY(clickQuickItem(window, QStringLiteral("percussionSoundButton-0")));
+        QCOMPARE(controller.selectedKind(), QStringLiteral("percussion"));
+        QCOMPARE(controller.selectedSound(), 0);
+
+        QVERIFY(clickQuickItem(window, QStringLiteral("pitchCellMouse-0-3")));
+        QVERIFY(feedback->isVisible());
+        QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(feedback);
+        QVERIFY(accessible != nullptr);
+        QCOMPARE(accessible->text(QAccessible::Name),
+                 QStringLiteral("Put Thump in the Thump drum row."));
+        QCOMPARE(controller.composition()->rowCount(), 0);
+
+        QVERIFY(clickQuickItem(window, QStringLiteral("drumCellMouse-0-1")));
+        QVERIFY(feedback->isVisible());
+        QCOMPARE(accessible->text(QAccessible::Name),
+                 QStringLiteral("Put Thump in the Thump drum row."));
+        QCOMPARE(controller.composition()->rowCount(), 0);
+
+        QVERIFY(clickQuickItem(window, QStringLiteral("drumCellMouse-0-0")));
+        QCOMPARE(controller.composition()->rowCount(), 1);
+        QVERIFY(!feedback->isVisible());
+
+        QVERIFY(clickQuickItem(window, QStringLiteral("pitchCellMouse-1-3")));
+        QVERIFY(feedback->isVisible());
+        QTRY_VERIFY_WITH_TIMEOUT(!feedback->isVisible(), 2600);
+        QCOMPARE(controller.composition()->rowCount(), 1);
     }
 }
 

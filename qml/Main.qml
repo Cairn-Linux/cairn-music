@@ -216,9 +216,14 @@ ApplicationWindow {
 
     function activatePitchCell(step, pitch) {
         markInteraction()
-        if (eraseMode)
+        if (eraseMode) {
+            const restoreFocus = activeFocusItem
+                && activeFocusItem.objectName
+                    === "pitchedTokenMouse-%1-%2".arg(step).arg(pitch)
             app.eraseAt("pitched", step, pitch)
-        else if (app.selectedKind === "pitched")
+            if (restoreFocus)
+                Qt.callLater(focusTimelinePosition, step, 6 - pitch)
+        } else if (app.selectedKind === "pitched")
             placePitchedAt(step, pitch)
         else if (app.selectedKind === "percussion")
             showDrumPlacementGuidance()
@@ -226,9 +231,14 @@ ApplicationWindow {
 
     function activateDrumCell(step, drumRow) {
         markInteraction()
-        if (eraseMode)
+        if (eraseMode) {
+            const restoreFocus = activeFocusItem
+                && activeFocusItem.objectName
+                    === "percussionTokenMouse-%1-%2".arg(step).arg(drumRow)
             app.eraseAt("percussion", step, drumRow)
-        else if (app.selectedKind === "percussion" && app.selectedSound === drumRow) {
+            if (restoreFocus)
+                Qt.callLater(focusTimelinePosition, step, 7 + drumRow)
+        } else if (app.selectedKind === "percussion" && app.selectedSound === drumRow) {
             clearPlacementFeedback()
             app.placePercussion(step)
         } else if (app.selectedKind === "percussion") {

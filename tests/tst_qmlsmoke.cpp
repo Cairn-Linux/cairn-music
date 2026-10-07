@@ -224,6 +224,7 @@ private slots:
     void timelineKeyboardTraversalIsSpatialAndBounded();
     void timelineTabExitSkipsDisabledUndo();
     void qmlRemainsCompatibleWithDeclaredMinimumQt();
+    void timelineKeepsFocusAfterKeyboardErase();
     void modalPopupsSuspendAndRestartInactivityGuidance();
     void showsNonColorSelectionCuesAndHonestSoundLabels();
     void keepsSoundLabelsReadableAtSupportedWindowSizes();
@@ -1625,6 +1626,30 @@ void QmlSmokeTest::qmlRemainsCompatibleWithDeclaredMinimumQt()
     const QByteArray source = qml.readAll();
     QVERIFY2(!source.contains("focusPolicy:"),
              "QQuickItem.focusPolicy requires Qt 6.7, but CMake declares Qt 6.2");
+}
+
+void QmlSmokeTest::timelineKeepsFocusAfterKeyboardErase()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+    QVERIFY(controller.placePitched(0, 6));
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QQuickItem *token = findQuickItem(window->contentItem(), "pitchedTokenMouse-0-6");
+    QVERIFY(token != nullptr);
+    QVERIFY(window->setProperty("eraseMode", true));
+    token->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(window, Qt::Key_Space);
+    QCoreApplication::processEvents();
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QCOMPARE(window->activeFocusItem()->objectName(), QStringLiteral("pitchCellMouse-0-6"));
+    QTest::keyClick(window, Qt::Key_Right);
+    QCOMPARE(window->activeFocusItem()->objectName(), QStringLiteral("pitchCellMouse-1-6"));
 }
 
 void QmlSmokeTest::modalPopupsSuspendAndRestartInactivityGuidance()

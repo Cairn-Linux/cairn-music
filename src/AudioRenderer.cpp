@@ -11,6 +11,9 @@
 
 namespace {
 constexpr double pi = 3.14159265358979323846;
+// Composition playback reserves enough deterministic headroom for the legal
+// three pitched plus two percussion voices. Preview rendering stays unchanged.
+constexpr qint64 compositionHeadroomDivisor = 4;
 
 void writeStereo(QByteArray &pcm, int frame, double value)
 {
@@ -136,8 +139,9 @@ QByteArray AudioRenderer::renderComposition(const QJsonObject &project, int temp
 
     QByteArray result(totalFrames * bytesPerFrame, Qt::Uninitialized);
     for (qsizetype sampleIndex = 0; sampleIndex < mix.size(); ++sampleIndex) {
+        const qint64 scaled = mix.at(sampleIndex) / compositionHeadroomDivisor;
         const qint16 sample = static_cast<qint16>(std::clamp(
-            mix.at(sampleIndex), qint64(std::numeric_limits<qint16>::min()),
+            scaled, qint64(std::numeric_limits<qint16>::min()),
             qint64(std::numeric_limits<qint16>::max())));
         qToLittleEndian(sample,
                         result.data() + sampleIndex * int(sizeof(qint16)));

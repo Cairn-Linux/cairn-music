@@ -265,6 +265,18 @@ bool AppController::addMeasure()
     return save();
 }
 
+bool AppController::removeMeasure()
+{
+    if (m_loadFailed || m_composition.measureCount() <= 2) {
+        return false;
+    }
+    stopCompositionPlaybackForMutation();
+    if (!m_composition.removeLastMeasure()) {
+        return false;
+    }
+    return save();
+}
+
 bool AppController::undo()
 {
     if (m_loadFailed || !m_composition.canUndo()) {

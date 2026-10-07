@@ -34,6 +34,7 @@ private slots:
     void growsToEightMeasuresButNoFurther();
     void refusesToRemoveEitherMinimumMeasure();
     void removesFinalMeasureEventsAsOneExactlyUndoableEdit();
+    void preservesUnaffectedRowsAcrossUndoAndMeasureRemoval();
     void clearsSongAsOneExactlyUndoableEdit();
     void placesPitchedTokenWithItsOwnSound();
     void rejectsOutOfRangePitchedPlacement();
@@ -104,6 +105,51 @@ void CompositionModelTest::removesFinalMeasureEventsAsOneExactlyUndoableEdit()
 
     QVERIFY(model.undo());
     QCOMPARE(model.toJson(), beforeRemoval);
+}
+
+void CompositionModelTest::preservesUnaffectedRowsAcrossUndoAndMeasureRemoval()
+{
+    CompositionModel model;
+    QVERIFY(model.addMeasure());
+    QVERIFY(model.placePitched(8, 5, 3));
+    QVERIFY(model.placePitched(0, 2, 1));
+    QVERIFY(model.placePercussion(11, 1));
+    QVERIFY(model.placePercussion(1, 0));
+
+    const QString pitchedId = model.data(model.index(1), CompositionModel::IdRole).toString();
+    const QString percussionId = model.data(model.index(3), CompositionModel::IdRole).toString();
+    QPersistentModelIndex pitchedIndex(model.index(1));
+    QPersistentModelIndex percussionIndex(model.index(3));
+    QSignalSpy modelReset(&model, &QAbstractItemModel::modelReset);
+
+    const QJsonObject beforeTemporaryEdit = model.toJson();
+    QVERIFY(model.placePitched(2, 4, 2));
+    QVERIFY(model.undo());
+    QCOMPARE(model.toJson(), beforeTemporaryEdit);
+    QVERIFY(pitchedIndex.isValid());
+    QVERIFY(percussionIndex.isValid());
+    QCOMPARE(pitchedIndex.row(), 1);
+    QCOMPARE(percussionIndex.row(), 3);
+    QCOMPARE(model.data(pitchedIndex, CompositionModel::IdRole).toString(), pitchedId);
+    QCOMPARE(model.data(percussionIndex, CompositionModel::IdRole).toString(), percussionId);
+
+    const QJsonObject beforeRemoval = model.toJson();
+    QVERIFY(model.removeLastMeasure());
+    QVERIFY(pitchedIndex.isValid());
+    QVERIFY(percussionIndex.isValid());
+    QCOMPARE(pitchedIndex.row(), 0);
+    QCOMPARE(percussionIndex.row(), 1);
+    QCOMPARE(model.data(pitchedIndex, CompositionModel::IdRole).toString(), pitchedId);
+    QCOMPARE(model.data(percussionIndex, CompositionModel::IdRole).toString(), percussionId);
+    QVERIFY(model.undo());
+    QCOMPARE(model.toJson(), beforeRemoval);
+    QVERIFY(pitchedIndex.isValid());
+    QVERIFY(percussionIndex.isValid());
+    QCOMPARE(pitchedIndex.row(), 1);
+    QCOMPARE(percussionIndex.row(), 3);
+    QCOMPARE(model.data(pitchedIndex, CompositionModel::IdRole).toString(), pitchedId);
+    QCOMPARE(model.data(percussionIndex, CompositionModel::IdRole).toString(), percussionId);
+    QCOMPARE(modelReset.count(), 0);
 }
 
 void CompositionModelTest::clearsSongAsOneExactlyUndoableEdit()

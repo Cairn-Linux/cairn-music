@@ -72,6 +72,7 @@ private:
     };
 
     void saveUndoPoint();
+    void restoreTokens(const QVector<Token> &tokens);
 
     static constexpr int MaxUndoHistory = 100;
 

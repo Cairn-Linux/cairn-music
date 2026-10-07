@@ -38,8 +38,17 @@ AppController::AppController(const QString &autosavePath, bool audioEnabled, QOb
 
 AppController::AppController(const QString &autosavePath, bool audioEnabled,
                              std::unique_ptr<AudioEngine> audio, QObject *parent)
+    : AppController(autosavePath, audioEnabled, std::move(audio),
+                    ProjectStore::save, parent)
+{
+}
+
+AppController::AppController(const QString &autosavePath, bool audioEnabled,
+                             std::unique_ptr<AudioEngine> audio, SaveFunction saveFunction,
+                             QObject *parent)
     : QObject(parent)
     , m_audio(audio ? std::move(audio) : std::make_unique<AudioEngine>())
+    , m_saveFunction(saveFunction ? std::move(saveFunction) : ProjectStore::save)
     , m_autosavePath(autosavePath.isEmpty()
           ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
               + QStringLiteral("/prototype-autosave.json")
@@ -222,10 +231,18 @@ bool AppController::placePitched(int step, int row)
         || row < 0 || row >= 7) {
         return false;
     }
-    stopCompositionPlaybackForMutation();
-    if (!m_composition.placePitched(step, row, m_selectedSound)) {
+    const CompositionModel::PlacementResult result =
+        m_composition.pitchedPlacementResult(step, row, m_selectedSound);
+    if (result == CompositionModel::PlacementResult::Rejected) {
         setPitchedPlacementRejected(true);
         return false;
+    }
+    if (result == CompositionModel::PlacementResult::Changed) {
+        stopCompositionPlaybackForMutation();
+        if (m_composition.placePitchedResult(step, row, m_selectedSound)
+            != CompositionModel::PlacementResult::Changed) {
+            return false;
+        }
     }
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPitched(m_selectedSound, row, 220))) {
@@ -233,7 +250,7 @@ bool AppController::placePitched(int step, int row)
             resetPlaybackProgress();
         }
     }
-    return save();
+    return result == CompositionModel::PlacementResult::Unchanged || save();
 }
 
 bool AppController::placePercussion(int step)
@@ -242,9 +259,17 @@ bool AppController::placePercussion(int step)
         || step < 0 || step >= m_composition.measureCount() * m_composition.stepsPerMeasure()) {
         return false;
     }
-    stopCompositionPlaybackForMutation();
-    if (!m_composition.placePercussion(step, m_selectedSound)) {
+    const CompositionModel::PlacementResult result =
+        m_composition.percussionPlacementResult(step, m_selectedSound);
+    if (result == CompositionModel::PlacementResult::Rejected) {
         return false;
+    }
+    if (result == CompositionModel::PlacementResult::Changed) {
+        stopCompositionPlaybackForMutation();
+        if (m_composition.placePercussionResult(step, m_selectedSound)
+            != CompositionModel::PlacementResult::Changed) {
+            return false;
+        }
     }
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPercussion(m_selectedSound, 180))) {
@@ -252,7 +277,7 @@ bool AppController::placePercussion(int step)
             resetPlaybackProgress();
         }
     }
-    return save();
+    return result == CompositionModel::PlacementResult::Unchanged || save();
 }
 
 bool AppController::eraseAt(const QString &kind, int step, int row)
@@ -410,7 +435,7 @@ void AppController::refreshPlaybackProgress()
 
 bool AppController::save()
 {
-    const bool succeeded = ProjectStore::save(m_autosavePath, m_composition);
+    const bool succeeded = m_saveFunction(m_autosavePath, m_composition);
     const bool failed = !succeeded;
     if (m_saveFailed != failed) {
         m_saveFailed = failed;

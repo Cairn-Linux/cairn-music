@@ -39,11 +39,12 @@ private slots:
     void rejectsOutOfRangePitchedPlacement();
     void placesPercussionInSeparateKind();
     void replacesOccupiedCellWithoutChangingOtherTokens();
+    void sameSoundPitchedPlacementIsUnchangedWithoutHistoryOrSignals();
     void erasesAndUndoesAPlacedToken();
     void limitsSimultaneousPitchedSoundsToThree();
     void replacesPercussionAtTheSameStepAndRow();
+    void existingPercussionPlacementIsUnchangedWithoutHistoryOrSignals();
     void undoRestoresReplacedPitchedToken();
-    void undoRestoresReplacedPercussionToken();
     void undoesSeveralEditsInReverseOrder();
     void newEditAfterUndoPreservesEarlierHistory();
     void boundsUndoHistoryToOneHundredEdits();
@@ -126,7 +127,8 @@ void CompositionModelTest::placesPitchedTokenWithItsOwnSound()
 {
     CompositionModel model;
 
-    QVERIFY(model.placePitched(3, 5, 2));
+    QCOMPARE(model.placePitchedResult(3, 5, 2),
+             CompositionModel::PlacementResult::Changed);
     QCOMPARE(model.rowCount(), 1);
     const QModelIndex token = model.index(0);
     QCOMPARE(model.data(token, CompositionModel::KindRole).toString(), "pitched");
@@ -139,7 +141,8 @@ void CompositionModelTest::rejectsOutOfRangePitchedPlacement()
 {
     CompositionModel model;
 
-    QVERIFY(!model.placePitched(-1, 0, 0));
+    QCOMPARE(model.placePitchedResult(-1, 0, 0),
+             CompositionModel::PlacementResult::Rejected);
     QVERIFY(!model.placePitched(8, 0, 0));
     QVERIFY(!model.placePitched(0, -1, 0));
     QVERIFY(!model.placePitched(0, 7, 0));
@@ -170,6 +173,28 @@ void CompositionModelTest::replacesOccupiedCellWithoutChangingOtherTokens()
 
     QCOMPARE(model.rowCount(), 1);
     QCOMPARE(model.data(model.index(0), CompositionModel::SoundIdRole).toInt(), 3);
+}
+
+void CompositionModelTest::sameSoundPitchedPlacementIsUnchangedWithoutHistoryOrSignals()
+{
+    CompositionModel model;
+    QVERIFY(model.placePitched(2, 4, 3));
+    const QJsonObject original = model.toJson();
+    const QString originalId = model.data(model.index(0), CompositionModel::IdRole).toString();
+    QSignalSpy dataChanged(&model, &QAbstractItemModel::dataChanged);
+    QSignalSpy canUndoChanged(&model, &CompositionModel::canUndoChanged);
+
+    QCOMPARE(model.placePitchedResult(2, 4, 3),
+             CompositionModel::PlacementResult::Unchanged);
+    QVERIFY(model.placePitched(2, 4, 3));
+
+    QCOMPARE(model.toJson(), original);
+    QCOMPARE(model.data(model.index(0), CompositionModel::IdRole).toString(), originalId);
+    QCOMPARE(dataChanged.count(), 0);
+    QCOMPARE(canUndoChanged.count(), 0);
+    QVERIFY(model.undo());
+    QCOMPARE(model.rowCount(), 0);
+    QVERIFY(!model.canUndo());
 }
 
 void CompositionModelTest::erasesAndUndoesAPlacedToken()
@@ -205,6 +230,26 @@ void CompositionModelTest::replacesPercussionAtTheSameStepAndRow()
     QCOMPARE(model.rowCount(), 1);
 }
 
+void CompositionModelTest::existingPercussionPlacementIsUnchangedWithoutHistoryOrSignals()
+{
+    CompositionModel model;
+    QVERIFY(model.placePercussion(3, 1));
+    const QJsonObject original = model.toJson();
+    const QString originalId = model.data(model.index(0), CompositionModel::IdRole).toString();
+    QSignalSpy dataChanged(&model, &QAbstractItemModel::dataChanged);
+
+    QCOMPARE(model.placePercussionResult(3, 1),
+             CompositionModel::PlacementResult::Unchanged);
+    QVERIFY(model.placePercussion(3, 1));
+
+    QCOMPARE(model.toJson(), original);
+    QCOMPARE(model.data(model.index(0), CompositionModel::IdRole).toString(), originalId);
+    QCOMPARE(dataChanged.count(), 0);
+    QVERIFY(model.undo());
+    QCOMPARE(model.rowCount(), 0);
+    QVERIFY(!model.canUndo());
+}
+
 void CompositionModelTest::undoRestoresReplacedPitchedToken()
 {
     CompositionModel model;
@@ -223,25 +268,6 @@ void CompositionModelTest::undoRestoresReplacedPitchedToken()
     QCOMPARE(model.data(model.index(0), CompositionModel::StepRole).toInt(), 2);
     QCOMPARE(model.data(model.index(0), CompositionModel::PitchRowRole).toInt(), 4);
     QCOMPARE(model.data(model.index(0), CompositionModel::SoundIdRole).toInt(), 0);
-}
-
-void CompositionModelTest::undoRestoresReplacedPercussionToken()
-{
-    CompositionModel model;
-
-    QVERIFY(model.placePercussion(3, 1));
-    const QString originalId = model.data(model.index(0), CompositionModel::IdRole).toString();
-
-    QVERIFY(model.placePercussion(3, 1));
-    QVERIFY(model.data(model.index(0), CompositionModel::IdRole).toString() != originalId);
-
-    QVERIFY(model.undo());
-    QCOMPARE(model.rowCount(), 1);
-    QCOMPARE(model.data(model.index(0), CompositionModel::IdRole).toString(), originalId);
-    QCOMPARE(model.data(model.index(0), CompositionModel::KindRole).toString(), "percussion");
-    QCOMPARE(model.data(model.index(0), CompositionModel::StepRole).toInt(), 3);
-    QCOMPARE(model.data(model.index(0), CompositionModel::PitchRowRole).toInt(), 1);
-    QCOMPARE(model.data(model.index(0), CompositionModel::SoundIdRole).toInt(), 1);
 }
 
 void CompositionModelTest::undoesSeveralEditsInReverseOrder()
@@ -297,7 +323,7 @@ void CompositionModelTest::boundsUndoHistoryToOneHundredEdits()
 
     QVERIFY(model.placePitched(0, 0, 0));
     for (int edit = 0; edit < 100; ++edit) {
-        QVERIFY(model.placePitched(0, 0, edit % 4));
+        QVERIFY(model.placePitched(0, 0, (edit + 1) % 4));
     }
 
     for (int undo = 0; undo < 100; ++undo) {

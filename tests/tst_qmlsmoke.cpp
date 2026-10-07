@@ -216,7 +216,9 @@ void QmlSmokeTest::showsAutosaveFailureWarning()
     QVERIFY(feedback->property("visible").toBool());
 
     QVERIFY(invokePitchedPlacement(root, 0, 1, placed));
-    QVERIFY(!placed);
+    QVERIFY(placed);
+    QVERIFY(controller.saveFailed());
+    QVERIFY(banner->property("visible").toBool());
     QVERIFY(!controller.pitchedPlacementRejected());
     QVERIFY(!feedback->property("visible").toBool());
     QCOMPARE(controller.composition()->rowCount(), 3);

@@ -8,6 +8,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <functional>
 #include <memory>
 
 class AppController final : public QObject
@@ -32,10 +33,15 @@ class AppController final : public QObject
                NOTIFY pitchedPlacementRejectedChanged)
 
 public:
+    using SaveFunction = std::function<bool(const QString &, const CompositionModel &)>;
+
     explicit AppController(const QString &autosavePath = {}, bool audioEnabled = true,
                            QObject *parent = nullptr);
     AppController(const QString &autosavePath, bool audioEnabled,
                   std::unique_ptr<AudioEngine> audio, QObject *parent = nullptr);
+    AppController(const QString &autosavePath, bool audioEnabled,
+                  std::unique_ptr<AudioEngine> audio, SaveFunction saveFunction,
+                  QObject *parent = nullptr);
 
     [[nodiscard]] CompositionModel *composition() noexcept;
     [[nodiscard]] QString selectedKind() const;
@@ -92,6 +98,7 @@ private:
 
     CompositionModel m_composition;
     std::unique_ptr<AudioEngine> m_audio;
+    SaveFunction m_saveFunction;
     QString m_autosavePath;
     QString m_selectedKind = QStringLiteral("pitched");
     int m_selectedSound = 0;

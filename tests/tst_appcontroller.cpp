@@ -107,7 +107,9 @@ private slots:
     void previewActivityIsSeparateFromCompositionPlayback();
     void undoDuringPlaybackStopsAndClearsQueuedAudio();
     void pitchedPlacementAndReplacementStopBeforeMutationThenPreview();
-    void percussionPlacementAndReplacementStopBeforeMutationThenPreview();
+    void percussionPlacementAndExistingTapPreview();
+    void unchangedPitchedPlacementPreviewsWithoutSavingOrAddingUndo();
+    void unchangedPercussionPlacementDoesNotRetryFailedSave();
     void eraserStopsPlaybackBeforeMutation();
     void addMeasureStopsPlaybackBeforeMutation();
     void removeMeasurePersistsAndUndoRestoresExactEvents();
@@ -257,7 +259,7 @@ void AppControllerTest::distinguishesPolyphonyRejectionFromSaveFailure()
     QVERIFY(controller.pitchedPlacementRejected());
     QCOMPARE(controller.composition()->rowCount(), 3);
 
-    QVERIFY(!controller.placePitched(0, 1));
+    QVERIFY(controller.placePitched(0, 1));
     QVERIFY(!controller.pitchedPlacementRejected());
     QCOMPARE(controller.composition()->rowCount(), 3);
 }
@@ -467,6 +469,9 @@ void AppControllerTest::pitchedPlacementAndReplacementStopBeforeMutationThenPrev
     QCOMPARE(controller.playbackStep(), -1);
 
     bool replacementSawStoppedPlayback = false;
+    const QJsonObject beforeReplacement = controller.composition()->toJson();
+    const QString originalId = controller.composition()->data(
+        controller.composition()->index(0), CompositionModel::IdRole).toString();
     connect(controller.composition(), &QAbstractItemModel::dataChanged,
             this, [&] {
                 replacementSawStoppedPlayback = !controller.playing()
@@ -474,15 +479,21 @@ void AppControllerTest::pitchedPlacementAndReplacementStopBeforeMutationThenPrev
                     && fakeAudio->resourcesReleased()
                     && controller.playbackStep() == -1;
             });
+    controller.selectPitched(2);
     controller.play();
     QVERIFY(controller.placePitched(1, 3));
     QVERIFY(replacementSawStoppedPlayback);
     QVERIFY(controller.playing());
     QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
+    QVERIFY(controller.composition()->data(
+                controller.composition()->index(0), CompositionModel::IdRole).toString()
+            != originalId);
+    QVERIFY(controller.undo());
+    QCOMPARE(controller.composition()->toJson(), beforeReplacement);
 }
 
-void AppControllerTest::percussionPlacementAndReplacementStopBeforeMutationThenPreview()
+void AppControllerTest::percussionPlacementAndExistingTapPreview()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -508,20 +519,83 @@ void AppControllerTest::percussionPlacementAndReplacementStopBeforeMutationThenP
     QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
 
-    bool replacementSawStoppedPlayback = false;
-    connect(controller.composition(), &QAbstractItemModel::dataChanged,
-            this, [&] {
-                replacementSawStoppedPlayback = !controller.playing()
-                    && !controller.compositionPlaying()
-                    && fakeAudio->resourcesReleased()
-                    && controller.playbackStep() == -1;
-            });
+    QSignalSpy dataChanged(controller.composition(), &QAbstractItemModel::dataChanged);
+    const int previewStarts = fakeAudio->startCalls;
     controller.play();
     QVERIFY(controller.placePercussion(1));
-    QVERIFY(replacementSawStoppedPlayback);
+    QCOMPARE(dataChanged.count(), 0);
+    QCOMPARE(fakeAudio->startCalls, previewStarts + 2);
     QVERIFY(controller.playing());
     QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
+}
+
+void AppControllerTest::unchangedPitchedPlacementPreviewsWithoutSavingOrAddingUndo()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    int saveCalls = 0;
+    AppController controller(
+        directory.filePath("autosave.json"), true, std::move(audio),
+        [&saveCalls](const QString &, const CompositionModel &) {
+            ++saveCalls;
+            return true;
+        });
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(1, 3));
+    QCOMPARE(saveCalls, 1);
+    const QJsonObject original = controller.composition()->toJson();
+    const QString originalId = controller.composition()->data(
+        controller.composition()->index(0), CompositionModel::IdRole).toString();
+    QSignalSpy dataChanged(controller.composition(), &QAbstractItemModel::dataChanged);
+    const int previewStarts = fakeAudio->startCalls;
+
+    QVERIFY(controller.placePitched(1, 3));
+
+    QCOMPARE(fakeAudio->startCalls, previewStarts + 1);
+    QCOMPARE(saveCalls, 1);
+    QCOMPARE(controller.composition()->toJson(), original);
+    QCOMPARE(controller.composition()->data(
+                 controller.composition()->index(0), CompositionModel::IdRole).toString(),
+             originalId);
+    QCOMPARE(dataChanged.count(), 0);
+    QVERIFY(controller.undo());
+    QCOMPARE(controller.composition()->rowCount(), 0);
+}
+
+void AppControllerTest::unchangedPercussionPlacementDoesNotRetryFailedSave()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    int saveCalls = 0;
+    AppController controller(
+        directory.filePath("autosave.json"), true, std::move(audio),
+        [&saveCalls](const QString &, const CompositionModel &) {
+            ++saveCalls;
+            return false;
+        });
+    QSignalSpy saveFailedChanged(&controller, &AppController::saveFailedChanged);
+    controller.selectPercussion(1);
+    QVERIFY(!controller.placePercussion(1));
+    QCOMPARE(saveCalls, 1);
+    QVERIFY(controller.saveFailed());
+    QCOMPARE(saveFailedChanged.count(), 1);
+    const QJsonObject original = controller.composition()->toJson();
+    const int previewStarts = fakeAudio->startCalls;
+
+    QVERIFY(controller.placePercussion(1));
+
+    QCOMPARE(fakeAudio->startCalls, previewStarts + 1);
+    QCOMPARE(saveCalls, 1);
+    QCOMPARE(controller.composition()->toJson(), original);
+    QVERIFY(controller.saveFailed());
+    QCOMPARE(saveFailedChanged.count(), 1);
+    QVERIFY(!controller.undo());
+    QCOMPARE(controller.composition()->rowCount(), 0);
 }
 
 void AppControllerTest::eraserStopsPlaybackBeforeMutation()

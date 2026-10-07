@@ -13,6 +13,12 @@ class CompositionModel final : public QAbstractListModel
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
 
 public:
+    enum class PlacementResult {
+        Rejected,
+        Unchanged,
+        Changed,
+    };
+
     enum Role {
         IdRole = Qt::UserRole + 1,
         KindRole,
@@ -34,6 +40,11 @@ public:
     bool addMeasure();
     bool removeLastMeasure();
     bool clearSong();
+    [[nodiscard]] PlacementResult pitchedPlacementResult(
+        int step, int pitchRow, int soundId) const;
+    [[nodiscard]] PlacementResult percussionPlacementResult(int step, int soundId) const;
+    PlacementResult placePitchedResult(int step, int pitchRow, int soundId);
+    PlacementResult placePercussionResult(int step, int soundId);
     bool placePitched(int step, int pitchRow, int soundId);
     bool placePercussion(int step, int soundId);
     bool eraseAt(const QString &kind, int step, int row);

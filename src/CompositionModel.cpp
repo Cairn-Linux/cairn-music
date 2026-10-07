@@ -125,11 +125,34 @@ bool CompositionModel::clearSong()
     return true;
 }
 
-bool CompositionModel::placePitched(int step, int pitchRow, int soundId)
+CompositionModel::PlacementResult CompositionModel::pitchedPlacementResult(
+    int step, int pitchRow, int soundId) const
 {
     if (step < 0 || step >= m_measureCount * stepsPerMeasure()
         || pitchRow < 0 || pitchRow >= 7 || soundId < 0 || soundId >= 4) {
-        return false;
+        return PlacementResult::Rejected;
+    }
+
+    int simultaneous = 0;
+    for (const Token &token : m_tokens) {
+        if (token.kind != QStringLiteral("pitched") || token.step != step) {
+            continue;
+        }
+        if (token.pitchRow == pitchRow) {
+            return token.soundId == soundId
+                ? PlacementResult::Unchanged : PlacementResult::Changed;
+        }
+        ++simultaneous;
+    }
+    return simultaneous >= 3 ? PlacementResult::Rejected : PlacementResult::Changed;
+}
+
+CompositionModel::PlacementResult CompositionModel::placePitchedResult(
+    int step, int pitchRow, int soundId)
+{
+    const PlacementResult result = pitchedPlacementResult(step, pitchRow, soundId);
+    if (result != PlacementResult::Changed) {
+        return result;
     }
 
     for (int row = 0; row < m_tokens.size(); ++row) {
@@ -140,18 +163,8 @@ bool CompositionModel::placePitched(int step, int pitchRow, int soundId)
             m_tokens[row].id = QUuid::createUuid().toString(QUuid::WithoutBraces);
             m_tokens[row].soundId = soundId;
             emit dataChanged(index(row), index(row), {IdRole, SoundIdRole});
-            return true;
+            return PlacementResult::Changed;
         }
-    }
-
-    int simultaneous = 0;
-    for (const Token &token : m_tokens) {
-        if (token.kind == QStringLiteral("pitched") && token.step == step) {
-            ++simultaneous;
-        }
-    }
-    if (simultaneous >= 3) {
-        return false;
     }
 
     saveUndoPoint();
@@ -160,25 +173,37 @@ bool CompositionModel::placePitched(int step, int pitchRow, int soundId)
     m_tokens.append({QUuid::createUuid().toString(QUuid::WithoutBraces),
                      QStringLiteral("pitched"), step, pitchRow, soundId});
     endInsertRows();
-    return true;
+    return PlacementResult::Changed;
 }
 
-bool CompositionModel::placePercussion(int step, int soundId)
+bool CompositionModel::placePitched(int step, int pitchRow, int soundId)
+{
+    return placePitchedResult(step, pitchRow, soundId) != PlacementResult::Rejected;
+}
+
+CompositionModel::PlacementResult CompositionModel::percussionPlacementResult(
+    int step, int soundId) const
 {
     if (step < 0 || step >= m_measureCount * stepsPerMeasure()
         || soundId < 0 || soundId >= 2) {
-        return false;
+        return PlacementResult::Rejected;
     }
 
-    for (int row = 0; row < m_tokens.size(); ++row) {
-        const Token &existing = m_tokens.at(row);
-        if (existing.kind == QStringLiteral("percussion")
-            && existing.step == step && existing.pitchRow == soundId) {
-            saveUndoPoint();
-            m_tokens[row].id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            emit dataChanged(index(row), index(row), {IdRole});
-            return true;
+    for (const Token &token : m_tokens) {
+        if (token.kind == QStringLiteral("percussion")
+            && token.step == step && token.pitchRow == soundId) {
+            return PlacementResult::Unchanged;
         }
+    }
+    return PlacementResult::Changed;
+}
+
+CompositionModel::PlacementResult CompositionModel::placePercussionResult(
+    int step, int soundId)
+{
+    const PlacementResult result = percussionPlacementResult(step, soundId);
+    if (result != PlacementResult::Changed) {
+        return result;
     }
 
     saveUndoPoint();
@@ -187,7 +212,12 @@ bool CompositionModel::placePercussion(int step, int soundId)
     m_tokens.append({QUuid::createUuid().toString(QUuid::WithoutBraces),
                      QStringLiteral("percussion"), step, soundId, soundId});
     endInsertRows();
-    return true;
+    return PlacementResult::Changed;
+}
+
+bool CompositionModel::placePercussion(int step, int soundId)
+{
+    return placePercussionResult(step, soundId) != PlacementResult::Rejected;
 }
 
 bool CompositionModel::eraseAt(const QString &kind, int step, int row)

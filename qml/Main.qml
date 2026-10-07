@@ -475,7 +475,17 @@ ApplicationWindow {
                         }
                         Item { Layout.fillWidth: true }
                         Button {
+                            objectName: "removeMeasureButton"
+                            Layout.minimumWidth: 44
+                            Layout.minimumHeight: 44
+                            text: qsTr("−  Remove measure")
+                            enabled: app.composition.measureCount > 2
+                            onClicked: app.removeMeasure()
+                            Accessible.name: qsTr("Remove final measure")
+                        }
+                        Button {
                             objectName: "addMeasureButton"
+                            Layout.minimumWidth: 44
                             Layout.minimumHeight: 44
                             text: qsTr("＋  Add measure")
                             enabled: app.composition.measureCount < 8

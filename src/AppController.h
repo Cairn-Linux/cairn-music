@@ -59,6 +59,7 @@ public:
     Q_INVOKABLE bool eraseAt(const QString &kind, int step, int row);
     Q_INVOKABLE bool addMeasure();
     Q_INVOKABLE bool removeMeasure();
+    Q_INVOKABLE bool clearSong();
     Q_INVOKABLE bool undo();
     Q_INVOKABLE bool preserveFailedAutosaveAndStartNew();
     Q_INVOKABLE void play();

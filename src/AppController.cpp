@@ -277,6 +277,16 @@ bool AppController::removeMeasure()
     return save();
 }
 
+bool AppController::clearSong()
+{
+    if (m_loadFailed) {
+        return false;
+    }
+    stop();
+    m_composition.clearSong();
+    return save();
+}
+
 bool AppController::undo()
 {
     if (m_loadFailed || !m_composition.canUndo()) {

@@ -220,6 +220,16 @@ bool CompositionModel::placePercussion(int step, int soundId)
     return placePercussionResult(step, soundId) != PlacementResult::Rejected;
 }
 
+bool CompositionModel::hasTokenAt(const QString &kind, int step, int row) const
+{
+    for (const Token &token : m_tokens) {
+        if (token.kind == kind && token.step == step && token.pitchRow == row) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool CompositionModel::eraseAt(const QString &kind, int step, int row)
 {
     for (int tokenIndex = 0; tokenIndex < m_tokens.size(); ++tokenIndex) {

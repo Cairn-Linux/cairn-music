@@ -47,6 +47,7 @@ public:
     PlacementResult placePercussionResult(int step, int soundId);
     bool placePitched(int step, int pitchRow, int soundId);
     bool placePercussion(int step, int soundId);
+    [[nodiscard]] bool hasTokenAt(const QString &kind, int step, int row) const;
     bool eraseAt(const QString &kind, int step, int row);
     bool undo();
     [[nodiscard]] QJsonObject toJson() const;

@@ -16,6 +16,8 @@ Read:
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — product, interaction, music and technical
   design;
+- [`docs/CHILD_TEST_PROTOCOL.md`](docs/CHILD_TEST_PROTOCOL.md) — the
+  privacy-preserving observation and clean-data procedure; and
 - [Repository decision] — why this is a separate repository and what work is
   currently allowed.
 

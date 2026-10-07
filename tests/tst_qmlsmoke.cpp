@@ -1,6 +1,7 @@
 #include <QtTest>
 #include <QtTest/qtestaccessible.h>
 #include <QAccessible>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
@@ -139,6 +140,8 @@ private slots:
     void clearsPlaybackIndicatorsForUndoMutation();
     void playheadMovesWithScrollableTimeline();
     void showsSelectedToolBesidePointerOnlyOverGrid();
+    void keepsToolIndicatorOutsideDestinationCells();
+    void restoresPointerAfterWindowDeactivationAndReentry();
 };
 
 void QmlSmokeTest::loadsPicturesWorkspace()
@@ -1023,6 +1026,8 @@ void QmlSmokeTest::showsSelectedToolBesidePointerOnlyOverGrid()
     QCOMPARE(engine.rootObjects().size(), 1);
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
     QVERIFY(window != nullptr);
+    window->requestActivate();
+    QVERIFY(QTest::qWaitForWindowActive(window));
 
     QQuickItem *indicator = findQuickItem(window->contentItem(), "activeToolIndicator");
     QQuickItem *indicatorMark = findQuickItem(window->contentItem(), "activeToolIndicatorMark");
@@ -1113,6 +1118,144 @@ void QmlSmokeTest::showsSelectedToolBesidePointerOnlyOverGrid()
         // Restore a sound selection before the next size iteration.
         QVERIFY(clickQuickItem(window, QStringLiteral("pitchedSoundButton-0")));
     }
+}
+
+void QmlSmokeTest::keepsToolIndicatorOutsideDestinationCells()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+    while (controller.composition()->measureCount() < 8) {
+        QVERIFY(controller.addMeasure());
+    }
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+
+    QQuickItem *indicator = findQuickItem(window->contentItem(), "activeToolIndicator");
+    QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+    QQuickItem *firstPitch = findQuickItem(window->contentItem(), "pitchCellMouse-0-3");
+    QQuickItem *lastPitch = findQuickItem(window->contentItem(), "pitchCellMouse-31-3");
+    QQuickItem *lastDrum = findQuickItem(window->contentItem(), "drumCellMouse-31-0");
+    QVERIFY(indicator != nullptr);
+    QVERIFY(timeline != nullptr);
+    QVERIFY(firstPitch != nullptr);
+    QVERIFY(lastPitch != nullptr);
+    QVERIFY(lastDrum != nullptr);
+
+    const auto verifyPlacement = [window, indicator, timeline](QQuickItem *destination) {
+        const QPoint pointer = destination->mapToScene(
+            QPointF(destination->width() / 2.0, destination->height() / 2.0)).toPoint();
+        QTest::mouseMove(window, pointer);
+        QCoreApplication::processEvents();
+        QVERIFY(indicator->isVisible());
+
+        const QRectF indicatorRect = indicator->mapRectToScene(indicator->boundingRect());
+        const QRectF destinationRect = destination->mapRectToScene(destination->boundingRect());
+        const QRectF viewportRect = timeline->mapRectToScene(timeline->boundingRect());
+        QVERIFY(!indicatorRect.intersects(destinationRect));
+        QVERIFY(viewportRect.contains(indicatorRect));
+    };
+
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QVERIFY(timeline->setProperty("contentX", 0.0));
+        QVERIFY(timeline->setProperty("contentY", 0.0));
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+        verifyPlacement(firstPitch);
+
+        const qreal maximumContentX = qMax(
+            0.0, timeline->property("contentWidth").toReal() - timeline->width());
+        QVERIFY(timeline->setProperty("contentX", maximumContentX));
+        QCoreApplication::processEvents();
+        verifyPlacement(lastPitch);
+
+        const qreal maximumContentY = qMax(
+            0.0, timeline->property("contentHeight").toReal() - timeline->height());
+        QVERIFY(timeline->setProperty("contentY", maximumContentY));
+        QCoreApplication::processEvents();
+        verifyPlacement(lastDrum);
+
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/pointer-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+}
+
+void QmlSmokeTest::restoresPointerAfterWindowDeactivationAndReentry()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+
+    QQuickItem *indicator = findQuickItem(window->contentItem(), "activeToolIndicator");
+    QQuickItem *pitchCell = findQuickItem(window->contentItem(), "pitchCellMouse-0-3");
+    QQuickItem *eraserButton = findQuickItem(window->contentItem(), "eraserButton");
+    QVERIFY(indicator != nullptr);
+    QVERIFY(pitchCell != nullptr);
+    QVERIFY(eraserButton != nullptr);
+
+    const QPoint gridPoint = pitchCell->mapToScene(
+        QPointF(pitchCell->width() / 2.0, pitchCell->height() / 2.0)).toPoint();
+    const QPoint controlPoint = eraserButton->mapToScene(
+        QPointF(eraserButton->width() / 2.0, eraserButton->height() / 2.0)).toPoint();
+    QTest::mouseMove(window, controlPoint);
+    QTest::mouseMove(window, gridPoint);
+    QCoreApplication::processEvents();
+    QVERIFY(indicator->isVisible());
+    QCOMPARE(window->property("toolPointerActive").toBool(),
+             window->isActive()
+                 && QGuiApplication::applicationState() == Qt::ApplicationActive);
+    QCOMPARE(pitchCell->property("cursorShape").toInt(), int(Qt::BlankCursor));
+
+    QQuickWindow otherWindow;
+    otherWindow.setGeometry(0, 0, 80, 80);
+    otherWindow.show();
+    otherWindow.requestActivate();
+    QVERIFY(QTest::qWaitForWindowActive(&otherWindow));
+    QVERIFY(!window->isActive());
+    QCoreApplication::processEvents();
+    QVERIFY(!indicator->isVisible());
+    QCOMPARE(window->property("toolPointerActive").toBool(),
+             window->isActive()
+                 && QGuiApplication::applicationState() == Qt::ApplicationActive);
+    QCOMPARE(pitchCell->property("cursorShape").toInt(), int(Qt::ArrowCursor));
+
+    QTest::mouseMove(window, controlPoint);
+    QCoreApplication::processEvents();
+    QVERIFY(!indicator->isVisible());
+
+    otherWindow.hide();
+    window->requestActivate();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+    QTest::mouseMove(window, gridPoint);
+    QCoreApplication::processEvents();
+    QVERIFY(indicator->isVisible());
+    QCOMPARE(pitchCell->property("cursorShape").toInt(), int(Qt::BlankCursor));
+
+    QTest::mouseMove(window, controlPoint);
+    QCoreApplication::processEvents();
+    QVERIFY(!indicator->isVisible());
+    QCOMPARE(window->cursor().shape(), Qt::ArrowCursor);
 }
 
 QTEST_MAIN(QmlSmokeTest)

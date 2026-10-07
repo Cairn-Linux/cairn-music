@@ -37,6 +37,11 @@ child's first observed session, or after an adult explicitly abandons an invalid
 run. Set `CHILD_SLOT` to exactly `younger` or `older`; any other value stops the
 procedure before a path is changed or the prototype is launched.
 
+Each standalone snippet below applies the same fail-closed rule: every existing
+path component must be a real directory, never a symlink, and every study path
+must resolve to its exact expected location before it is read, moved, copied, or
+passed to the prototype.
+
 ```sh
 set -eu
 umask 077
@@ -49,16 +54,97 @@ esac
 SLOT_ROOT="$STUDY_ROOT/$CHILD_SLOT"
 CURRENT_ROOT="$SLOT_ROOT/current"
 
+safe_directory() {
+    directory=$1
+    requirement=$2
+    component=$directory
+    case "$component" in
+        /*) ;;
+        *) printf '%s\n' "Path is not absolute: $directory" >&2; exit 1 ;;
+    esac
+    while [ "$component" != / ]; do
+        if [ -L "$component" ]; then
+            printf '%s\n' "Symlinked path component: $component" >&2
+            exit 1
+        fi
+        if [ -e "$component" ] && [ ! -d "$component" ]; then
+            printf '%s\n' "Non-directory path component: $component" >&2
+            exit 1
+        fi
+        component=${component%/*}
+        [ -n "$component" ] || component=/
+    done
+    if [ "$requirement" = required ] && [ ! -d "$directory" ]; then
+        printf '%s\n' "Missing directory: $directory" >&2
+        exit 1
+    fi
+}
+
+# Check every existing component before creation, including the nearest existing
+# parent of any path that does not exist yet.
+safe_directory "$HOME" required
+for directory in "$STUDY_ROOT" "$SLOT_ROOT" "$CURRENT_ROOT" \
+        "$CURRENT_ROOT/data" "$CURRENT_ROOT/config" "$CURRENT_ROOT/cache"; do
+    safe_directory "$directory" allow-missing
+done
+HOME_CANON=$(realpath -e -- "$HOME")
 install -d -m 700 -- "$STUDY_ROOT" "$SLOT_ROOT"
-if [ -e "$CURRENT_ROOT" ]; then
+for directory in "$STUDY_ROOT" "$SLOT_ROOT"; do
+    safe_directory "$directory" required
+done
+STUDY_CANON=$(realpath -e -- "$STUDY_ROOT")
+SLOT_CANON=$(realpath -e -- "$SLOT_ROOT")
+[ "$STUDY_CANON" = "$HOME_CANON/.local/share/cairn-music-child-test" ] &&
+    [ "$SLOT_CANON" = "$STUDY_CANON/$CHILD_SLOT" ] || {
+    printf '%s\n' "Initial-session path escapes its expected parent" >&2
+    exit 1
+}
+STUDY_ROOT=$STUDY_CANON
+SLOT_ROOT=$SLOT_CANON
+CURRENT_ROOT="$SLOT_ROOT/current"
+if [ -d "$CURRENT_ROOT" ]; then
+    CURRENT_CANON=$(realpath -e -- "$CURRENT_ROOT")
+    [ "$CURRENT_CANON" = "$SLOT_ROOT/current" ] || {
+        printf '%s\n' "Current path escapes the selected slot" >&2
+        exit 1
+    }
     ARCHIVE_ROOT=$(mktemp -d \
         "$SLOT_ROOT/archive-before-$(date +%Y%m%dT%H%M%S)-XXXXXX")
+    cleanup_empty_archive() {
+        rmdir -- "$ARCHIVE_ROOT" 2>/dev/null || :
+    }
+    trap cleanup_empty_archive 0 1 2 15
+    safe_directory "$ARCHIVE_ROOT" required
+    ARCHIVE_CANON=$(realpath -e -- "$ARCHIVE_ROOT")
+    case "$ARCHIVE_CANON" in
+        "$SLOT_ROOT"/archive-before-*) ;;
+        *) printf '%s\n' "Archive path escapes the selected slot" >&2; exit 1 ;;
+    esac
+    ARCHIVE_ROOT=$ARCHIVE_CANON
     mv -- "$CURRENT_ROOT" "$ARCHIVE_ROOT/current"
+    trap - 0 1 2 15
 fi
 install -d -m 700 -- \
     "$CURRENT_ROOT/data" \
     "$CURRENT_ROOT/config" \
     "$CURRENT_ROOT/cache"
+for directory in "$CURRENT_ROOT" "$CURRENT_ROOT/data" \
+        "$CURRENT_ROOT/config" "$CURRENT_ROOT/cache"; do
+    safe_directory "$directory" required
+done
+CURRENT_CANON=$(realpath -e -- "$CURRENT_ROOT")
+[ "$CURRENT_CANON" = "$SLOT_ROOT/current" ] || {
+    printf '%s\n' "Current path escapes the selected slot" >&2
+    exit 1
+}
+for directory in data config cache; do
+    DIRECTORY_CANON=$(realpath -e -- "$CURRENT_ROOT/$directory")
+    [ "$DIRECTORY_CANON" = "$CURRENT_CANON/$directory" ] || {
+        printf '%s\n' "Child path escapes current: $directory" >&2
+        exit 1
+    }
+done
+CURRENT_ROOT=$CURRENT_CANON
 
 env \
     XDG_DATA_HOME="$CURRENT_ROOT/data" \
@@ -89,17 +175,43 @@ esac
 SLOT_ROOT="$STUDY_ROOT/$CHILD_SLOT"
 CURRENT_ROOT="$SLOT_ROOT/current"
 
-for directory in "$STUDY_ROOT" "$SLOT_ROOT" "$CURRENT_ROOT" \
-        "$CURRENT_ROOT/data" "$CURRENT_ROOT/config" "$CURRENT_ROOT/cache"; do
-    if [ ! -d "$directory" ] || [ -L "$directory" ]; then
-        printf '%s\n' "Missing or symlinked return-session directory: $directory" >&2
+safe_directory() {
+    directory=$1
+    requirement=$2
+    component=$directory
+    case "$component" in
+        /*) ;;
+        *) printf '%s\n' "Path is not absolute: $directory" >&2; exit 1 ;;
+    esac
+    while [ "$component" != / ]; do
+        if [ -L "$component" ]; then
+            printf '%s\n' "Symlinked path component: $component" >&2
+            exit 1
+        fi
+        if [ -e "$component" ] && [ ! -d "$component" ]; then
+            printf '%s\n' "Non-directory path component: $component" >&2
+            exit 1
+        fi
+        component=${component%/*}
+        [ -n "$component" ] || component=/
+    done
+    if [ "$requirement" = required ] && [ ! -d "$directory" ]; then
+        printf '%s\n' "Missing directory: $directory" >&2
         exit 1
     fi
+}
+
+safe_directory "$HOME" required
+for directory in "$STUDY_ROOT" "$SLOT_ROOT" "$CURRENT_ROOT" \
+        "$CURRENT_ROOT/data" "$CURRENT_ROOT/config" "$CURRENT_ROOT/cache"; do
+    safe_directory "$directory" required
 done
+HOME_CANON=$(realpath -e -- "$HOME")
 STUDY_CANON=$(realpath -e -- "$STUDY_ROOT")
 SLOT_CANON=$(realpath -e -- "$SLOT_ROOT")
 CURRENT_CANON=$(realpath -e -- "$CURRENT_ROOT")
-[ "$SLOT_CANON" = "$STUDY_CANON/$CHILD_SLOT" ] &&
+[ "$STUDY_CANON" = "$HOME_CANON/.local/share/cairn-music-child-test" ] &&
+    [ "$SLOT_CANON" = "$STUDY_CANON/$CHILD_SLOT" ] &&
     [ "$CURRENT_CANON" = "$SLOT_CANON/current" ] || {
     printf '%s\n' "Return-session path escapes the selected slot" >&2
     exit 1
@@ -218,16 +330,44 @@ If **"Your song is here, but it is not saved yet."** appears:
    esac
    SLOT_ROOT="$STUDY_ROOT/$CHILD_SLOT"
    CURRENT_ROOT="$SLOT_ROOT/current"
-   for directory in "$STUDY_ROOT" "$SLOT_ROOT" "$CURRENT_ROOT"; do
-       if [ ! -d "$directory" ] || [ -L "$directory" ]; then
-           printf '%s\n' "Missing or symlinked snapshot directory: $directory" >&2
+
+   safe_directory() {
+       directory=$1
+       requirement=$2
+       component=$directory
+       case "$component" in
+           /*) ;;
+           *) printf '%s\n' "Path is not absolute: $directory" >&2; exit 1 ;;
+       esac
+       while [ "$component" != / ]; do
+           if [ -L "$component" ]; then
+               printf '%s\n' "Symlinked path component: $component" >&2
+               exit 1
+           fi
+           if [ -e "$component" ] && [ ! -d "$component" ]; then
+               printf '%s\n' "Non-directory path component: $component" >&2
+               exit 1
+           fi
+           component=${component%/*}
+           [ -n "$component" ] || component=/
+       done
+       if [ "$requirement" = required ] && [ ! -d "$directory" ]; then
+           printf '%s\n' "Missing directory: $directory" >&2
            exit 1
        fi
+   }
+
+   safe_directory "$HOME" required
+   for directory in "$STUDY_ROOT" "$SLOT_ROOT" "$CURRENT_ROOT" \
+           "$CURRENT_ROOT/data" "$CURRENT_ROOT/config" "$CURRENT_ROOT/cache"; do
+       safe_directory "$directory" required
    done
+   HOME_CANON=$(realpath -e -- "$HOME")
    STUDY_CANON=$(realpath -e -- "$STUDY_ROOT")
    SLOT_CANON=$(realpath -e -- "$SLOT_ROOT")
    CURRENT_CANON=$(realpath -e -- "$CURRENT_ROOT")
-   [ "$SLOT_CANON" = "$STUDY_CANON/$CHILD_SLOT" ] &&
+   [ "$STUDY_CANON" = "$HOME_CANON/.local/share/cairn-music-child-test" ] &&
+       [ "$SLOT_CANON" = "$STUDY_CANON/$CHILD_SLOT" ] &&
        [ "$CURRENT_CANON" = "$SLOT_CANON/current" ] || {
        printf '%s\n' "Snapshot path escapes the selected slot" >&2
        exit 1
@@ -241,6 +381,13 @@ If **"Your song is here, but it is not saved yet."** appears:
        rm -rf -- "$SNAPSHOT"
    }
    trap cleanup_incomplete_snapshot 0 1 2 15
+   safe_directory "$SNAPSHOT" required
+   SNAPSHOT_CANON=$(realpath -e -- "$SNAPSHOT")
+   case "$SNAPSHOT_CANON" in
+       "$SLOT_ROOT"/failure-*) ;;
+       *) printf '%s\n' "Snapshot path escapes the selected slot" >&2; exit 1 ;;
+   esac
+   SNAPSHOT=$SNAPSHOT_CANON
    cp -a -- "$CURRENT_ROOT/." "$SNAPSHOT/"
    chmod -R a-w -- "$SNAPSHOT"
    trap - 0 1 2 15

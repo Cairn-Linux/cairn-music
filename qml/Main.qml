@@ -238,85 +238,6 @@ ApplicationWindow {
             }
         }
 
-        Rectangle {
-            objectName: "saveFailureBanner"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 54
-            visible: app.saveFailed && !app.loadFailed
-            radius: 14
-            color: "#fff0c2"
-            border.color: "#d69f32"
-            border.width: 2
-            Accessible.name: app.saveFailureMessage
-
-            Label {
-                anchors.centerIn: parent
-                width: parent.width - 32
-                text: app.saveFailureMessage
-                color: "#5c3b00"
-                font.pixelSize: 17
-                font.bold: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
-
-        Rectangle {
-            objectName: "audioFailureBanner"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 54
-            visible: app.audioFailed && !app.loadFailed
-            radius: 14
-            color: "#d9f3ff"
-            border.color: "#3b9fc4"
-            border.width: 2
-            Accessible.name: app.audioFailureMessage
-            Accessible.role: Accessible.AlertMessage
-            onVisibleChanged: {
-                if (visible)
-                    Accessible.announce(app.audioFailureMessage, Accessible.Polite)
-            }
-
-            Label {
-                anchors.centerIn: parent
-                width: parent.width - 32
-                text: app.audioFailureMessage
-                color: "#123e52"
-                font.pixelSize: 17
-                font.bold: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
-
-        Rectangle {
-            objectName: "placementFeedback"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 54
-            visible: root.placementFeedbackVisible
-            radius: 14
-            color: "#efe5ff"
-            border.color: "#8b65b3"
-            border.width: 2
-            Accessible.name: root.placementFeedbackMessage
-            Accessible.role: Accessible.AlertMessage
-            onVisibleChanged: {
-                if (visible)
-                    Accessible.announce(root.placementFeedbackMessage, Accessible.Polite)
-            }
-
-            Label {
-                anchors.centerIn: parent
-                width: parent.width - 32
-                text: root.placementFeedbackMessage
-                color: "#3a2948"
-                font.pixelSize: 17
-                font.bold: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
-
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -855,6 +776,110 @@ ApplicationWindow {
 
                         ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                     }
+                }
+            }
+        }
+    }
+
+    Item {
+        id: notificationTray
+        objectName: "notificationTray"
+        readonly property int visibleCount:
+            (app.saveFailed && !app.loadFailed ? 1 : 0)
+            + (app.audioFailed && !app.loadFailed ? 1 : 0)
+            + (root.placementFeedbackVisible ? 1 : 0)
+        x: 24
+        y: 20
+        width: root.width < 1004 ? 440 : 720
+        height: visibleCount > 0 ? visibleCount * 28 + (visibleCount - 1) * 3 : 0
+        visible: visibleCount > 0
+        z: 200
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 3
+
+            Rectangle {
+                objectName: "saveFailureBanner"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                visible: app.saveFailed && !app.loadFailed
+                radius: 8
+                color: "#fff0c2"
+                border.color: "#d69f32"
+                border.width: 2
+                Accessible.name: app.saveFailureMessage
+                Accessible.role: Accessible.AlertMessage
+                onVisibleChanged: {
+                    if (visible)
+                        Accessible.announce(app.saveFailureMessage, Accessible.Polite)
+                }
+
+                Label {
+                    objectName: "saveFailureLabel"
+                    anchors.centerIn: parent
+                    width: parent.width - 16
+                    text: app.saveFailureMessage
+                    color: "#5c3b00"
+                    font.pixelSize: 14
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+            }
+
+            Rectangle {
+                objectName: "audioFailureBanner"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                visible: app.audioFailed && !app.loadFailed
+                radius: 8
+                color: "#d9f3ff"
+                border.color: "#3b9fc4"
+                border.width: 2
+                Accessible.name: app.audioFailureMessage
+                Accessible.role: Accessible.AlertMessage
+                onVisibleChanged: {
+                    if (visible)
+                        Accessible.announce(app.audioFailureMessage, Accessible.Polite)
+                }
+
+                Label {
+                    objectName: "audioFailureLabel"
+                    anchors.centerIn: parent
+                    width: parent.width - 16
+                    text: app.audioFailureMessage
+                    color: "#123e52"
+                    font.pixelSize: 14
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+            }
+
+            Rectangle {
+                objectName: "placementFeedback"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 28
+                visible: root.placementFeedbackVisible
+                radius: 8
+                color: "#efe5ff"
+                border.color: "#8b65b3"
+                border.width: 2
+                Accessible.name: root.placementFeedbackMessage
+                Accessible.role: Accessible.AlertMessage
+                onVisibleChanged: {
+                    if (visible)
+                        Accessible.announce(root.placementFeedbackMessage, Accessible.Polite)
+                }
+
+                Label {
+                    objectName: "placementFeedbackLabel"
+                    anchors.centerIn: parent
+                    width: parent.width - 16
+                    text: root.placementFeedbackMessage
+                    color: "#3a2948"
+                    font.pixelSize: 14
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
                 }
             }
         }

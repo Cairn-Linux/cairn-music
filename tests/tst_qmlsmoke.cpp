@@ -125,6 +125,7 @@ private slots:
     void placesPercussionThroughSeparateLane();
     void erasesAndUndoesMultiplePointerEdits();
     void addsMeasuresThroughPrototypeLimit();
+    void removesMeasuresWithAccessiblePointerAndKeyboardControl();
     void controlsPlayStopAndLoopThroughQml();
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
@@ -409,6 +410,71 @@ void QmlSmokeTest::addsMeasuresThroughPrototypeLimit()
     QVERIFY(!button->property("enabled").toBool());
     QVERIFY(clickQuickItem(root, QStringLiteral("addMeasureButton")));
     QCOMPARE(controller.composition()->measureCount(), 8);
+}
+
+void QmlSmokeTest::removesMeasuresWithAccessiblePointerAndKeyboardControl()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QQuickItem *button = findQuickItem(window->contentItem(),
+                                       QStringLiteral("removeMeasureButton"));
+    QVERIFY(button != nullptr);
+    QVERIFY(!button->property("enabled").toBool());
+    QVERIFY(button->property("activeFocusOnTab").toBool());
+
+    QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(button);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Remove final measure"));
+    QCOMPARE(accessible->role(), QAccessible::Button);
+
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        const QRectF buttonRect = button->mapRectToScene(button->boundingRect());
+        QVERIFY(QRectF(QPointF(0, 0), size).contains(buttonRect));
+        QVERIFY(buttonRect.width() >= 44.0);
+        QVERIFY(buttonRect.height() >= 44.0);
+
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/remove-measure-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 3);
+    QVERIFY(button->property("enabled").toBool());
+
+    button->forceActiveFocus(Qt::TabFocusReason);
+    QVERIFY(button->hasActiveFocus());
+    QTest::keyClick(window, Qt::Key_Space);
+    QCoreApplication::processEvents();
+    QCOMPARE(controller.composition()->measureCount(), 2);
+
+    while (controller.composition()->measureCount() < 8) {
+        QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
+    }
+    for (int expected = 7; expected >= 2; --expected) {
+        QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+        QCOMPARE(controller.composition()->measureCount(), expected);
+    }
+    QVERIFY(!button->property("enabled").toBool());
 }
 
 void QmlSmokeTest::controlsPlayStopAndLoopThroughQml()

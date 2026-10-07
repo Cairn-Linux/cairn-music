@@ -131,6 +131,8 @@ private slots:
     void erasesAndUndoesMultiplePointerEdits();
     void addsMeasuresThroughPrototypeLimit();
     void removesMeasuresWithAccessiblePointerAndKeyboardControl();
+    void clearSongDialogCancelsWithoutSideEffects();
+    void clearSongDialogConfirmsWithAccessibleControls();
     void controlsPlayStopAndLoopThroughQml();
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
@@ -496,6 +498,133 @@ void QmlSmokeTest::removesMeasuresWithAccessiblePointerAndKeyboardControl()
         QCOMPARE(controller.composition()->measureCount(), expected);
     }
     QVERIFY(!button->property("enabled").toBool());
+}
+
+void QmlSmokeTest::clearSongDialogCancelsWithoutSideEffects()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    QVERIFY(controller.addMeasure());
+    controller.selectPitched(2);
+    QVERIFY(controller.placePitched(8, 4));
+    const QJsonObject beforeClear = controller.composition()->toJson();
+    controller.setLoopEnabled(true);
+    controller.play();
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QObject *dialog = window->findChild<QObject *>("clearSongDialog");
+    QVERIFY(dialog != nullptr);
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("clearSongButton")));
+    QVERIFY(dialog->property("visible").toBool());
+    QCOMPARE(controller.composition()->toJson(), beforeClear);
+    QVERIFY(controller.playing());
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("cancelClearSongButton")));
+    QVERIFY(!dialog->property("visible").toBool());
+    QCOMPARE(controller.composition()->toJson(), beforeClear);
+    QVERIFY(controller.playing());
+
+    QQuickItem *clearButton = findQuickItem(window->contentItem(),
+                                            QStringLiteral("clearSongButton"));
+    QVERIFY(clearButton != nullptr);
+    clearButton->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(window, Qt::Key_Space);
+    QCoreApplication::processEvents();
+    QVERIFY(dialog->property("visible").toBool());
+    QTest::keyClick(window, Qt::Key_Escape);
+    QCoreApplication::processEvents();
+    QVERIFY(!dialog->property("visible").toBool());
+    QCOMPARE(controller.composition()->toJson(), beforeClear);
+    QVERIFY(controller.playing());
+}
+
+void QmlSmokeTest::clearSongDialogConfirmsWithAccessibleControls()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    QVERIFY(controller.addMeasure());
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(8, 6));
+    const QJsonObject beforeClear = controller.composition()->toJson();
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QQuickItem *clearButton = findQuickItem(window->contentItem(),
+                                            QStringLiteral("clearSongButton"));
+    QVERIFY(clearButton != nullptr);
+    QCOMPARE(clearButton->property("text").toString(), QStringLiteral("Clear Song"));
+    QVERIFY(clearButton->property("activeFocusOnTab").toBool());
+    QAccessibleInterface *clearAccessible = QAccessible::queryAccessibleInterface(clearButton);
+    QVERIFY(clearAccessible != nullptr);
+    QCOMPARE(clearAccessible->text(QAccessible::Name), QStringLiteral("Clear Song"));
+    QCOMPARE(clearAccessible->role(), QAccessible::Button);
+
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        const QRectF buttonRect = clearButton->mapRectToScene(clearButton->boundingRect());
+        QVERIFY(QRectF(QPointF(0, 0), size).contains(buttonRect));
+        QVERIFY(buttonRect.width() >= 44.0);
+        QVERIFY(buttonRect.height() >= 44.0);
+
+        QVERIFY(clickQuickItem(window, QStringLiteral("clearSongButton")));
+        QObject *dialog = window->findChild<QObject *>("clearSongDialog");
+        QVERIFY(dialog != nullptr);
+        QVERIFY(dialog->property("visible").toBool());
+        QObject *message = window->findChild<QObject *>("clearSongMessage");
+        QVERIFY(message != nullptr);
+        QCOMPARE(message->property("text").toString(),
+                 QStringLiteral("The current song will be cleared."));
+        QVERIFY(!window->findChild<QObject *>("fileDialog"));
+
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/clear-song-confirm-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+
+        if (size != supportedSizes.constLast()) {
+            QVERIFY(clickQuickItem(window, QStringLiteral("cancelClearSongButton")));
+        }
+    }
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("confirmClearSongButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+    QVERIFY(controller.loopEnabled());
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("undoButton")));
+    QCOMPARE(controller.composition()->toJson(), beforeClear);
+    QVERIFY(findQuickItem(window->contentItem(), QStringLiteral("addMeasureButton")) != nullptr);
+    QVERIFY(findQuickItem(window->contentItem(), QStringLiteral("removeMeasureButton")) != nullptr);
 }
 
 void QmlSmokeTest::controlsPlayStopAndLoopThroughQml()

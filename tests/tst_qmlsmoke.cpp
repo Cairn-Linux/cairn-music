@@ -10,10 +10,45 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTemporaryDir>
+#include <QTranslator>
 
 #include "AppController.h"
 
 namespace {
+class LongMessageTranslator final : public QTranslator
+{
+public:
+    QString translate(const char *, const char *sourceText, const char *, int) const override
+    {
+        const QString source = QString::fromUtf8(sourceText);
+        if (source == QStringLiteral("Your song is here, but it is not saved yet.")) {
+            return QStringLiteral("Ihre Komposition ist noch hier, wurde aber nicht gespeichert. Versuchen Sie es erneut.");
+        }
+        if (source == QStringLiteral("Sound stopped. You can try Play again.")) {
+            return QStringLiteral("Die Audiowiedergabe wurde angehalten. Ihre Komposition ist sicher. Starten Sie erneut.");
+        }
+        if (source == QStringLiteral("Only three sounds can play here.")) {
+            return QStringLiteral("Hier können nur drei Klänge gleichzeitig spielen. Entfernen Sie zuerst einen vorhandenen Klang.");
+        }
+        return {};
+    }
+};
+
+class ScopedTranslator final
+{
+public:
+    explicit ScopedTranslator(QTranslator *translator)
+        : m_translator(translator)
+    {
+        QCoreApplication::installTranslator(m_translator);
+    }
+
+    ~ScopedTranslator() { QCoreApplication::removeTranslator(m_translator); }
+
+private:
+    QTranslator *m_translator;
+};
+
 bool invokePitchedPlacement(QObject *root, int step, int pitch, bool &placed)
 {
     QVariant returned;
@@ -145,6 +180,7 @@ private slots:
     void handlesPitchedPlacementFeedback();
     void keepsPlacementFeedbackFromMovingWorkspace();
     void keepsConcurrentNotificationsStableAndReadable();
+    void wrapsLocalizedNotificationsWithoutObscuringWorkspace();
     void keepsAddMeasureUsableAtMinimumSize();
     void showsCurrentPlaybackStepAndSoundingEvents();
     void makesLoopRestartVisibleAndAnnouncesIt();
@@ -1307,6 +1343,159 @@ void QmlSmokeTest::keepsConcurrentNotificationsStableAndReadable()
         QVERIFY(audioBanner->isVisible());
         QVERIFY(playButton->hasActiveFocus());
         verifyStable();
+    }
+}
+
+void QmlSmokeTest::wrapsLocalizedNotificationsWithoutObscuringWorkspace()
+{
+    LongMessageTranslator translator;
+    ScopedTranslator scopedTranslator(&translator);
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+
+    for (const QSize &size : supportedSizes) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString blockedParent = directory.filePath("blocked");
+        QFile blocker(blockedParent);
+        QVERIFY(blocker.open(QIODevice::WriteOnly));
+        QVERIFY(blocker.write("not a directory") > 0);
+        blocker.close();
+
+        auto audio = std::make_unique<AudioEngine>(false);
+        AppController controller(blockedParent + QStringLiteral("/autosave.json"), true,
+                                 std::move(audio));
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+        QVERIFY(window != nullptr);
+        window->resize(size);
+        QCoreApplication::processEvents();
+
+        QQuickItem *tray = findQuickItem(window->contentItem(), "notificationTray");
+        QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+        QQuickItem *pitchGrid = findQuickItem(window->contentItem(), "pitchGrid");
+        QQuickItem *drumLane = findQuickItem(window->contentItem(), "drumLane");
+        QQuickItem *palette = findQuickItem(window->contentItem(), "pitchedSoundButton-0");
+        QQuickItem *drumControl = findQuickItem(window->contentItem(), "percussionSoundButton-0");
+        QQuickItem *playButton = findQuickItem(window->contentItem(), "playButton");
+        QVERIFY(tray != nullptr);
+        QVERIFY(timeline != nullptr);
+        QVERIFY(pitchGrid != nullptr);
+        QVERIFY(drumLane != nullptr);
+        QVERIFY(palette != nullptr);
+        QVERIFY(drumControl != nullptr);
+        QVERIFY(playButton != nullptr);
+
+        const QList<QQuickItem *> stableItems = {timeline, pitchGrid, drumLane,
+                                                 palette, drumControl};
+        QList<QRectF> stableRects;
+        for (QQuickItem *item : stableItems) {
+            stableRects.append(item->mapRectToScene(item->boundingRect()));
+        }
+
+        playButton->forceActiveFocus(Qt::TabFocusReason);
+        QVERIFY(playButton->hasActiveFocus());
+        bool placed = true;
+        for (int pitch = 0; pitch < 3; ++pitch) {
+            QVERIFY(invokePitchedPlacement(window, 0, pitch, placed));
+            QVERIFY(!placed);
+        }
+        controller.play();
+        QVERIFY(invokePitchedPlacement(window, 0, 3, placed));
+        QVERIFY(!placed);
+        QCoreApplication::processEvents();
+
+        QVERIFY(controller.saveFailed());
+        QVERIFY(controller.audioFailed());
+        QVERIFY(playButton->hasActiveFocus());
+        for (qsizetype index = 0; index < stableItems.size(); ++index) {
+            QCOMPARE(stableItems.at(index)->mapRectToScene(stableItems.at(index)->boundingRect()),
+                     stableRects.at(index));
+        }
+
+        const QRectF windowRect(QPointF(0, 0), size);
+        const QRectF trayRect = tray->mapRectToScene(tray->boundingRect());
+        QVERIFY2(windowRect.contains(trayRect), "Localized notification tray must stay in window");
+
+        const QStringList bannerNames = {
+            QStringLiteral("saveFailureBanner"),
+            QStringLiteral("audioFailureBanner"),
+            QStringLiteral("placementFeedback"),
+        };
+        const QStringList labelNames = {
+            QStringLiteral("saveFailureLabel"),
+            QStringLiteral("audioFailureLabel"),
+            QStringLiteral("placementFeedbackLabel"),
+        };
+        QList<QRectF> bannerRects;
+        for (qsizetype index = 0; index < bannerNames.size(); ++index) {
+            QQuickItem *banner = findQuickItem(window->contentItem(), bannerNames.at(index));
+            QQuickItem *label = findQuickItem(window->contentItem(), labelNames.at(index));
+            QVERIFY2(banner != nullptr, qPrintable(bannerNames.at(index)));
+            QVERIFY2(label != nullptr, qPrintable(labelNames.at(index)));
+            QVERIFY2(banner->isVisible(), qPrintable(bannerNames.at(index)));
+            if (size.width() == 900) {
+                QVERIFY2(label->property("lineCount").toInt() >= 2,
+                         qPrintable(QStringLiteral("%1 did not wrap").arg(labelNames.at(index))));
+            }
+
+            const QRectF bannerRect = banner->mapRectToScene(banner->boundingRect());
+            const QRectF labelRect = label->mapRectToScene(label->boundingRect());
+            QVERIFY2(windowRect.contains(bannerRect), qPrintable(bannerNames.at(index)));
+            QVERIFY2(bannerRect.contains(labelRect), qPrintable(labelNames.at(index)));
+            QVERIFY2(label->property("paintedWidth").toReal() <= label->width() + 0.5,
+                     qPrintable(labelNames.at(index)));
+            QVERIFY2(label->property("paintedHeight").toReal() <= label->height() + 0.5,
+                     qPrintable(labelNames.at(index)));
+            bannerRects.append(bannerRect);
+        }
+        QVERIFY2(bannerRects.at(0).bottom() < bannerRects.at(1).top(),
+                 "Save notification must remain first without overlap");
+        QVERIFY2(bannerRects.at(1).bottom() < bannerRects.at(2).top(),
+                 "Audio notification must remain second without overlap");
+
+        QStringList protectedNames = {
+            QStringLiteral("undoButton"),
+            QStringLiteral("eraserButton"),
+            QStringLiteral("playButton"),
+            QStringLiteral("loopCheckBox"),
+            QStringLiteral("clearSongButton"),
+            QStringLiteral("pitchedSoundButton-0"),
+            QStringLiteral("pitchedSoundButton-1"),
+            QStringLiteral("pitchedSoundButton-2"),
+            QStringLiteral("pitchedSoundButton-3"),
+            QStringLiteral("percussionSoundButton-0"),
+            QStringLiteral("percussionSoundButton-1"),
+            QStringLiteral("compositionToken-0-0"),
+            QStringLiteral("compositionToken-0-1"),
+            QStringLiteral("compositionToken-0-2"),
+        };
+        for (const QString &objectName : protectedNames) {
+            QQuickItem *item = findQuickItem(window->contentItem(), objectName);
+            QVERIFY2(item != nullptr, qPrintable(objectName));
+            const QRectF itemRect = item->mapRectToScene(item->boundingRect());
+            QVERIFY2(windowRect.contains(itemRect), qPrintable(objectName));
+            for (const QRectF &bannerRect : bannerRects) {
+                QVERIFY2(!bannerRect.intersects(itemRect),
+                         qPrintable(QStringLiteral("Notification %1,%2 %3x%4 covers %5 at %6,%7 %8x%9")
+                                        .arg(bannerRect.x()).arg(bannerRect.y())
+                                        .arg(bannerRect.width()).arg(bannerRect.height())
+                                        .arg(objectName).arg(itemRect.x()).arg(itemRect.y())
+                                        .arg(itemRect.width()).arg(itemRect.height())));
+            }
+        }
+
+        const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/localized-notifications-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
     }
 }
 

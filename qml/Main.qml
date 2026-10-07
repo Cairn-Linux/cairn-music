@@ -443,6 +443,7 @@ ApplicationWindow {
                         }
                         Item { Layout.fillWidth: true }
                         Button {
+                            id: clearSongButton
                             objectName: "clearSongButton"
                             Layout.minimumWidth: 44
                             Layout.minimumHeight: 44
@@ -789,20 +790,24 @@ ApplicationWindow {
             + (app.audioFailed && !app.loadFailed ? 1 : 0)
             + (root.placementFeedbackVisible ? 1 : 0)
         x: 24
-        y: 20
+        y: Math.max(0, Math.min(20,
+                               clearSongButton.mapToItem(null, 0, 0).y - 3 - height))
         width: root.width < 1004 ? 440 : 720
-        height: visibleCount > 0 ? visibleCount * 28 + (visibleCount - 1) * 3 : 0
+        height: notificationColumn.implicitHeight
         visible: visibleCount > 0
         z: 200
 
         ColumnLayout {
-            anchors.fill: parent
+            id: notificationColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
             spacing: 3
 
             Rectangle {
                 objectName: "saveFailureBanner"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 28
+                Layout.preferredHeight: Math.max(28, saveFailureLabel.implicitHeight + 8)
                 visible: app.saveFailed && !app.loadFailed
                 radius: 8
                 color: "#fff0c2"
@@ -816,6 +821,7 @@ ApplicationWindow {
                 }
 
                 Label {
+                    id: saveFailureLabel
                     objectName: "saveFailureLabel"
                     anchors.centerIn: parent
                     width: parent.width - 16
@@ -823,6 +829,7 @@ ApplicationWindow {
                     color: "#5c3b00"
                     font.pixelSize: 14
                     font.bold: true
+                    wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                 }
             }
@@ -830,7 +837,7 @@ ApplicationWindow {
             Rectangle {
                 objectName: "audioFailureBanner"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 28
+                Layout.preferredHeight: Math.max(28, audioFailureLabel.implicitHeight + 8)
                 visible: app.audioFailed && !app.loadFailed
                 radius: 8
                 color: "#d9f3ff"
@@ -844,6 +851,7 @@ ApplicationWindow {
                 }
 
                 Label {
+                    id: audioFailureLabel
                     objectName: "audioFailureLabel"
                     anchors.centerIn: parent
                     width: parent.width - 16
@@ -851,6 +859,7 @@ ApplicationWindow {
                     color: "#123e52"
                     font.pixelSize: 14
                     font.bold: true
+                    wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                 }
             }
@@ -858,7 +867,7 @@ ApplicationWindow {
             Rectangle {
                 objectName: "placementFeedback"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 28
+                Layout.preferredHeight: Math.max(28, placementFeedbackLabel.implicitHeight + 8)
                 visible: root.placementFeedbackVisible
                 radius: 8
                 color: "#efe5ff"
@@ -872,6 +881,7 @@ ApplicationWindow {
                 }
 
                 Label {
+                    id: placementFeedbackLabel
                     objectName: "placementFeedbackLabel"
                     anchors.centerIn: parent
                     width: parent.width - 16
@@ -879,6 +889,7 @@ ApplicationWindow {
                     color: "#3a2948"
                     font.pixelSize: 14
                     font.bold: true
+                    wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                 }
             }

@@ -104,6 +104,7 @@ private slots:
     void stopDoesNotRestartLoopingPlayback();
     void playOnceStopsAtNaturalCompletion();
     void previewInterruptsCompositionLoopPolicy();
+    void previewActivityIsSeparateFromCompositionPlayback();
     void undoDuringPlaybackStopsAndClearsQueuedAudio();
     void pitchedPlacementAndReplacementStopBeforeMutationThenPreview();
     void percussionPlacementAndReplacementStopBeforeMutationThenPreview();
@@ -375,6 +376,37 @@ void AppControllerTest::previewInterruptsCompositionLoopPolicy()
     QVERIFY(!fakeAudio->playing());
     QCOMPARE(fakeAudio->startCalls, 2);
     QVERIFY(fakeAudio->resourcesReleased());
+}
+
+void AppControllerTest::previewActivityIsSeparateFromCompositionPlayback()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    QSignalSpy compositionPlayingChanged(
+        &controller, &AppController::compositionPlayingChanged);
+
+    controller.selectPitched(2);
+    QVERIFY(controller.playing());
+    QVERIFY(!controller.compositionPlaying());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(compositionPlayingChanged.count(), 0);
+
+    controller.play();
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(controller.playbackStep(), 0);
+    QCOMPARE(fakeAudio->startCalls, 2);
+    QCOMPARE(compositionPlayingChanged.count(), 1);
+
+    fakeAudio->finishCurrentBuffer();
+    QVERIFY(!controller.playing());
+    QVERIFY(!controller.compositionPlaying());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(compositionPlayingChanged.count(), 2);
 }
 
 void AppControllerTest::undoDuringPlaybackStopsAndClearsQueuedAudio()

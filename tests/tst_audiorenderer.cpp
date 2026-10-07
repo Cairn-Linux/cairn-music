@@ -2,12 +2,26 @@
 
 #include "AudioRenderer.h"
 
+#include <QCryptographicHash>
 #include <QtEndian>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace {
+constexpr double pi = 3.14159265358979323846;
+constexpr double bubbleVibratoDepth = 0.025;
+constexpr double bubbleVibratoRate = 7.0;
+constexpr double intendedBubbleVibratoSemitoneBound = 0.45;
+
+double pitchFrequency(int row)
+{
+    static constexpr double naturals[] = {261.6256, 293.6648, 329.6276, 349.2282,
+                                          391.9954, 440.0, 493.8833};
+    return naturals[row];
+}
+
 QList<qint16> samples(const QByteArray &pcm)
 {
     QList<qint16> decoded;
@@ -62,6 +76,9 @@ private slots:
     void repeatedCompositionRenderProducesIdenticalPcm();
     void equivalentVoiceOrderProducesIdenticalPcm();
     void rendersMaximumLengthFinalStepSafely();
+    void bubbleAccumulatesBoundedInstantaneousFrequencyForEveryPitchRow();
+    void otherPitchedSoundsRetainExactPcmForEveryPitchRow();
+    void bubbleCompositionRetainsPreviewBoundaryAndHeadroom();
 };
 
 void AudioRendererTest::rendersFourDistinctPitchedSounds()
@@ -251,6 +268,100 @@ void AudioRendererTest::rendersMaximumLengthFinalStepSafely()
                         [](char value) { return value == 0; }));
     QVERIFY(std::any_of(pcm.cbegin() + finalStepByte, pcm.cend(),
                         [](char value) { return value != 0; }));
+}
+
+void AudioRendererTest::bubbleAccumulatesBoundedInstantaneousFrequencyForEveryPitchRow()
+{
+    constexpr int durationMs = 420;
+    const int frames = AudioRenderer::sampleRate * durationMs / 1000;
+    double previousMinimumFrequency = 0.0;
+    double previousMaximumFrequency = 0.0;
+
+    for (int row = 0; row < 7; ++row) {
+        const QByteArray pcm = AudioRenderer::renderPitched(3, row, durationMs);
+        QCOMPARE(pcm, AudioRenderer::renderPitched(3, row, durationMs));
+        QCOMPARE(pcm.size(), frames * int(sizeof(qint16) * 2));
+
+        const double nominalFrequency = pitchFrequency(row);
+        double accumulatedPhase = 0.0;
+        double minimumFrequency = std::numeric_limits<double>::max();
+        double maximumFrequency = 0.0;
+        for (int frame = 0; frame < frames; ++frame) {
+            const double time = double(frame) / AudioRenderer::sampleRate;
+            const double progress = double(frame) / std::max(1, frames - 1);
+            const double attack = std::min(1.0, progress * 40.0);
+            const double release = std::min(1.0, (1.0 - progress) * 12.0);
+            const double wobble = 1.0 + bubbleVibratoDepth
+                * std::sin(2.0 * pi * bubbleVibratoRate * time);
+            const double instantaneousFrequency = nominalFrequency * wobble;
+            accumulatedPhase += 2.0 * pi * instantaneousFrequency
+                / AudioRenderer::sampleRate;
+
+            const double value = (std::sin(accumulatedPhase)
+                                  + 0.22 * std::sin(2.0 * pi * nominalFrequency
+                                                   * 2.0 * time))
+                * attack * release * 0.8;
+            const qint16 expected = static_cast<qint16>(
+                std::clamp(value, -1.0, 1.0) * 24000.0);
+            const qsizetype offset = qsizetype(frame) * qsizetype(sizeof(qint16) * 2);
+            QCOMPARE(qFromLittleEndian<qint16>(pcm.constData() + offset), expected);
+            QCOMPARE(qFromLittleEndian<qint16>(pcm.constData() + offset + sizeof(qint16)),
+                     expected);
+
+            minimumFrequency = std::min(minimumFrequency, instantaneousFrequency);
+            maximumFrequency = std::max(maximumFrequency, instantaneousFrequency);
+            const double semitoneDeviation = 12.0
+                * std::log2(instantaneousFrequency / nominalFrequency);
+            QVERIFY2(std::abs(semitoneDeviation) <= intendedBubbleVibratoSemitoneBound,
+                     qPrintable(QStringLiteral("row %1 frame %2 deviated by %3 semitones")
+                                    .arg(row).arg(frame).arg(semitoneDeviation, 0, 'f', 6)));
+        }
+
+        if (row > 0) {
+            QVERIFY(minimumFrequency > previousMinimumFrequency);
+            QVERIFY(maximumFrequency > previousMaximumFrequency);
+        }
+        previousMinimumFrequency = minimumFrequency;
+        previousMaximumFrequency = maximumFrequency;
+    }
+}
+
+void AudioRendererTest::otherPitchedSoundsRetainExactPcmForEveryPitchRow()
+{
+    static constexpr const char *expectedHashes[] = {
+        "aff6c5be2f2962a5e6325863ab1cfabbdf4ac68e634de0845cfe6bee460786bd",
+        "2458aebb1464402ffb7e8c70d107788224f09f48da47724ce2421d797990ca58",
+        "2880b119f0289269a985c459849f5b4d49b94883f021478c9a5744bbe796c239",
+    };
+
+    for (int soundId = 0; soundId < 3; ++soundId) {
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        for (int row = 0; row < 7; ++row) {
+            const QByteArray pcm = AudioRenderer::renderPitched(soundId, row, 420);
+            hash.addData(pcm);
+            QVERIFY(pcm != AudioRenderer::renderPitched(3, row, 420));
+        }
+        QCOMPARE(hash.result().toHex(), QByteArray(expectedHashes[soundId]));
+    }
+}
+
+void AudioRendererTest::bubbleCompositionRetainsPreviewBoundaryAndHeadroom()
+{
+    const QJsonObject voice{{"id", "bubble"}, {"kind", "pitched"}, {"step", 0},
+                            {"row", 5}, {"sound", 3}};
+    const QByteArray preview = AudioRenderer::renderPitched(3, 5, 420);
+    const QByteArray composition = AudioRenderer::renderComposition(
+        projectWithVoices({voice}), 112);
+
+    QVERIFY(!preview.isEmpty());
+    QVERIFY(composition.size() >= preview.size());
+    for (qsizetype offset = 0; offset < preview.size();
+         offset += qsizetype(sizeof(qint16))) {
+        const qint16 previewSample = qFromLittleEndian<qint16>(preview.constData() + offset);
+        const qint16 compositionSample = qFromLittleEndian<qint16>(
+            composition.constData() + offset);
+        QCOMPARE(compositionSample, qint16(previewSample / 4));
+    }
 }
 
 QTEST_MAIN(AudioRendererTest)

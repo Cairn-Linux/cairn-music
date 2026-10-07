@@ -86,14 +86,32 @@ case "$CHILD_SLOT" in
     younger|older) ;;
     *) printf '%s\n' "Invalid CHILD_SLOT: $CHILD_SLOT" >&2; exit 2 ;;
 esac
-CURRENT_ROOT="$STUDY_ROOT/$CHILD_SLOT/current"
+SLOT_ROOT="$STUDY_ROOT/$CHILD_SLOT"
+CURRENT_ROOT="$SLOT_ROOT/current"
 
+for directory in "$STUDY_ROOT" "$SLOT_ROOT" "$CURRENT_ROOT" \
+        "$CURRENT_ROOT/data" "$CURRENT_ROOT/config" "$CURRENT_ROOT/cache"; do
+    if [ ! -d "$directory" ] || [ -L "$directory" ]; then
+        printf '%s\n' "Missing or symlinked return-session directory: $directory" >&2
+        exit 1
+    fi
+done
+STUDY_CANON=$(realpath -e -- "$STUDY_ROOT")
+SLOT_CANON=$(realpath -e -- "$SLOT_ROOT")
+CURRENT_CANON=$(realpath -e -- "$CURRENT_ROOT")
+[ "$SLOT_CANON" = "$STUDY_CANON/$CHILD_SLOT" ] &&
+    [ "$CURRENT_CANON" = "$SLOT_CANON/current" ] || {
+    printf '%s\n' "Return-session path escapes the selected slot" >&2
+    exit 1
+}
 for directory in data config cache; do
-    [ -d "$CURRENT_ROOT/$directory" ] || {
-        printf '%s\n' "Missing return-session directory: $directory" >&2
+    DIRECTORY_CANON=$(realpath -e -- "$CURRENT_ROOT/$directory")
+    [ "$DIRECTORY_CANON" = "$CURRENT_CANON/$directory" ] || {
+        printf '%s\n' "Return-session path escapes current: $directory" >&2
         exit 1
     }
 done
+CURRENT_ROOT="$CURRENT_CANON"
 AUTOSAVE=$(find "$CURRENT_ROOT/data" -type f \
     -name prototype-autosave.json -print -quit)
 [ -n "$AUTOSAVE" ] || {
@@ -200,10 +218,22 @@ If **"Your song is here, but it is not saved yet."** appears:
    esac
    SLOT_ROOT="$STUDY_ROOT/$CHILD_SLOT"
    CURRENT_ROOT="$SLOT_ROOT/current"
-   [ -d "$CURRENT_ROOT" ] || {
-       printf '%s\n' "Missing current slot: $CURRENT_ROOT" >&2
+   for directory in "$STUDY_ROOT" "$SLOT_ROOT" "$CURRENT_ROOT"; do
+       if [ ! -d "$directory" ] || [ -L "$directory" ]; then
+           printf '%s\n' "Missing or symlinked snapshot directory: $directory" >&2
+           exit 1
+       fi
+   done
+   STUDY_CANON=$(realpath -e -- "$STUDY_ROOT")
+   SLOT_CANON=$(realpath -e -- "$SLOT_ROOT")
+   CURRENT_CANON=$(realpath -e -- "$CURRENT_ROOT")
+   [ "$SLOT_CANON" = "$STUDY_CANON/$CHILD_SLOT" ] &&
+       [ "$CURRENT_CANON" = "$SLOT_CANON/current" ] || {
+       printf '%s\n' "Snapshot path escapes the selected slot" >&2
        exit 1
    }
+   SLOT_ROOT="$SLOT_CANON"
+   CURRENT_ROOT="$CURRENT_CANON"
    SNAPSHOT=$(mktemp -d \
        "$SLOT_ROOT/failure-$(date +%Y%m%dT%H%M%S)-XXXXXX")
    cleanup_incomplete_snapshot() {

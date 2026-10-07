@@ -140,6 +140,7 @@ private slots:
     void clearsLoopRestartNoticeForSoundPreview();
     void clearsPlaybackIndicatorsForUndoMutation();
     void playheadMovesWithScrollableTimeline();
+    void keepsScrolledTimelineInRangeAfterMeasureRemoval();
     void showsSelectedToolBesidePointerOnlyOverGrid();
     void keepsToolIndicatorOutsideDestinationCells();
     void restoresPointerAfterWindowDeactivationAndReentry();
@@ -1078,6 +1079,46 @@ void QmlSmokeTest::playheadMovesWithScrollableTimeline()
     QCoreApplication::processEvents();
     const qreal after = playhead->mapToScene(QPointF()).x();
     QVERIFY(qAbs((before - after) - 120.0) < 1.0);
+}
+
+void QmlSmokeTest::keepsScrolledTimelineInRangeAfterMeasureRemoval()
+{
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppController controller(directory.filePath("autosave.json"), false);
+        while (controller.composition()->measureCount() < 8) {
+            QVERIFY(controller.addMeasure());
+        }
+
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("app", &controller);
+        engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+        QVERIFY(window != nullptr);
+        window->resize(size);
+        QCoreApplication::processEvents();
+
+        QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+        QVERIFY(timeline != nullptr);
+        const qreal oldMaximum = qMax(
+            0.0, timeline->property("contentWidth").toReal() - timeline->width());
+        QVERIFY(oldMaximum > 0.0);
+        QVERIFY(timeline->setProperty("contentX", oldMaximum));
+        QCoreApplication::processEvents();
+
+        QVERIFY(controller.removeMeasure());
+        QCoreApplication::processEvents();
+        const qreal newMaximum = qMax(
+            0.0, timeline->property("contentWidth").toReal() - timeline->width());
+        QVERIFY2(timeline->property("contentX").toReal() <= newMaximum + 0.5,
+                 qPrintable(QStringLiteral("contentX %1 exceeds maximum %2 at %3x%4")
+                                .arg(timeline->property("contentX").toReal())
+                                .arg(newMaximum).arg(size.width()).arg(size.height())));
+        QVERIFY(timeline->property("contentX").toReal() >= 0.0);
+    }
 }
 
 void QmlSmokeTest::showsSelectedToolBesidePointerOnlyOverGrid()

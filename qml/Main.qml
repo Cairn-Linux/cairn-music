@@ -238,85 +238,6 @@ ApplicationWindow {
             }
         }
 
-        Rectangle {
-            objectName: "saveFailureBanner"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 54
-            visible: app.saveFailed && !app.loadFailed
-            radius: 14
-            color: "#fff0c2"
-            border.color: "#d69f32"
-            border.width: 2
-            Accessible.name: app.saveFailureMessage
-
-            Label {
-                anchors.centerIn: parent
-                width: parent.width - 32
-                text: app.saveFailureMessage
-                color: "#5c3b00"
-                font.pixelSize: 17
-                font.bold: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
-
-        Rectangle {
-            objectName: "audioFailureBanner"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 54
-            visible: app.audioFailed && !app.loadFailed
-            radius: 14
-            color: "#d9f3ff"
-            border.color: "#3b9fc4"
-            border.width: 2
-            Accessible.name: app.audioFailureMessage
-            Accessible.role: Accessible.AlertMessage
-            onVisibleChanged: {
-                if (visible)
-                    Accessible.announce(app.audioFailureMessage, Accessible.Polite)
-            }
-
-            Label {
-                anchors.centerIn: parent
-                width: parent.width - 32
-                text: app.audioFailureMessage
-                color: "#123e52"
-                font.pixelSize: 17
-                font.bold: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
-
-        Rectangle {
-            objectName: "placementFeedback"
-            Layout.fillWidth: true
-            Layout.preferredHeight: 54
-            visible: root.placementFeedbackVisible
-            radius: 14
-            color: "#efe5ff"
-            border.color: "#8b65b3"
-            border.width: 2
-            Accessible.name: root.placementFeedbackMessage
-            Accessible.role: Accessible.AlertMessage
-            onVisibleChanged: {
-                if (visible)
-                    Accessible.announce(root.placementFeedbackMessage, Accessible.Polite)
-            }
-
-            Label {
-                anchors.centerIn: parent
-                width: parent.width - 32
-                text: root.placementFeedbackMessage
-                color: "#3a2948"
-                font.pixelSize: 17
-                font.bold: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-        }
-
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -522,6 +443,7 @@ ApplicationWindow {
                         }
                         Item { Layout.fillWidth: true }
                         Button {
+                            id: clearSongButton
                             objectName: "clearSongButton"
                             Layout.minimumWidth: 44
                             Layout.minimumHeight: 44
@@ -855,6 +777,120 @@ ApplicationWindow {
 
                         ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                     }
+                }
+            }
+        }
+    }
+
+    Item {
+        id: notificationTray
+        objectName: "notificationTray"
+        readonly property int visibleCount:
+            (app.saveFailed && !app.loadFailed ? 1 : 0)
+            + (app.audioFailed && !app.loadFailed ? 1 : 0)
+            + (root.placementFeedbackVisible ? 1 : 0)
+        x: 24
+        y: Math.max(0, Math.min(20,
+                               clearSongButton.mapToItem(null, 0, 0).y - 3 - height))
+        width: root.width < 1004 ? 440 : 720
+        height: notificationColumn.implicitHeight
+        visible: visibleCount > 0
+        z: 200
+
+        ColumnLayout {
+            id: notificationColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            spacing: 3
+
+            Rectangle {
+                objectName: "saveFailureBanner"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(28, saveFailureLabel.implicitHeight + 8)
+                visible: app.saveFailed && !app.loadFailed
+                radius: 8
+                color: "#fff0c2"
+                border.color: "#d69f32"
+                border.width: 2
+                Accessible.name: app.saveFailureMessage
+                Accessible.role: Accessible.AlertMessage
+                onVisibleChanged: {
+                    if (visible)
+                        Accessible.announce(app.saveFailureMessage, Accessible.Polite)
+                }
+
+                Label {
+                    id: saveFailureLabel
+                    objectName: "saveFailureLabel"
+                    anchors.centerIn: parent
+                    width: parent.width - 16
+                    text: app.saveFailureMessage
+                    color: "#5c3b00"
+                    font.pixelSize: 14
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+            }
+
+            Rectangle {
+                objectName: "audioFailureBanner"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(28, audioFailureLabel.implicitHeight + 8)
+                visible: app.audioFailed && !app.loadFailed
+                radius: 8
+                color: "#d9f3ff"
+                border.color: "#3b9fc4"
+                border.width: 2
+                Accessible.name: app.audioFailureMessage
+                Accessible.role: Accessible.AlertMessage
+                onVisibleChanged: {
+                    if (visible)
+                        Accessible.announce(app.audioFailureMessage, Accessible.Polite)
+                }
+
+                Label {
+                    id: audioFailureLabel
+                    objectName: "audioFailureLabel"
+                    anchors.centerIn: parent
+                    width: parent.width - 16
+                    text: app.audioFailureMessage
+                    color: "#123e52"
+                    font.pixelSize: 14
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+            }
+
+            Rectangle {
+                objectName: "placementFeedback"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(28, placementFeedbackLabel.implicitHeight + 8)
+                visible: root.placementFeedbackVisible
+                radius: 8
+                color: "#efe5ff"
+                border.color: "#8b65b3"
+                border.width: 2
+                Accessible.name: root.placementFeedbackMessage
+                Accessible.role: Accessible.AlertMessage
+                onVisibleChanged: {
+                    if (visible)
+                        Accessible.announce(root.placementFeedbackMessage, Accessible.Polite)
+                }
+
+                Label {
+                    id: placementFeedbackLabel
+                    objectName: "placementFeedbackLabel"
+                    anchors.centerIn: parent
+                    width: parent.width - 16
+                    text: root.placementFeedbackMessage
+                    color: "#3a2948"
+                    font.pixelSize: 14
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
                 }
             }
         }

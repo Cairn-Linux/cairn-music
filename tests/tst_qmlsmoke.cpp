@@ -716,6 +716,24 @@ void QmlSmokeTest::previewThenPlayUsesCompositionStateThroughQml()
     QVERIFY(!status->property("visible").toBool());
     QVERIFY(!restartBadge->property("visible").toBool());
 
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        QCOMPARE(window->size(), size);
+        QVERIFY(playButton->property("text").toString().contains(QStringLiteral("Play")));
+        QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Play song"));
+        if (!screenshotDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(screenshotDirectory));
+            const QString path = QStringLiteral("%1/preview-play-control-%2x%3.png")
+                                     .arg(screenshotDirectory)
+                                     .arg(size.width())
+                                     .arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
     QVERIFY(clickQuickItem(window, QStringLiteral("loopCheckBox")));
     QVERIFY(clickQuickItem(window, QStringLiteral("playButton")));
     QVERIFY(controller.compositionPlaying());

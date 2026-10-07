@@ -596,6 +596,22 @@ void QmlSmokeTest::clearSongDialogConfirmsWithAccessibleControls()
         QVERIFY(message != nullptr);
         QCOMPARE(message->property("text").toString(),
                  QStringLiteral("The current song will be cleared."));
+        QQuickItem *cancelButton = findQuickItem(window->contentItem(),
+                                                 QStringLiteral("cancelClearSongButton"));
+        QQuickItem *confirmButton = findQuickItem(window->contentItem(),
+                                                  QStringLiteral("confirmClearSongButton"));
+        QVERIFY(cancelButton != nullptr);
+        QVERIFY(confirmButton != nullptr);
+        QVERIFY(cancelButton->width() >= 44.0 && cancelButton->height() >= 44.0);
+        QVERIFY(confirmButton->width() >= 44.0 && confirmButton->height() >= 44.0);
+        QAccessibleInterface *cancelAccessible = QAccessible::queryAccessibleInterface(cancelButton);
+        QAccessibleInterface *confirmAccessible = QAccessible::queryAccessibleInterface(confirmButton);
+        QVERIFY(cancelAccessible != nullptr);
+        QVERIFY(confirmAccessible != nullptr);
+        QCOMPARE(cancelAccessible->text(QAccessible::Name),
+                 QStringLiteral("Cancel clearing song"));
+        QCOMPARE(confirmAccessible->text(QAccessible::Name),
+                 QStringLiteral("Confirm Clear Song"));
         QVERIFY(!window->findChild<QObject *>("fileDialog"));
 
         if (!screenshotDirectory.isEmpty()) {

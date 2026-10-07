@@ -15,6 +15,8 @@ ApplicationWindow {
     property bool eraseMode: false
     property int cellWidth: 72
     readonly property bool compactLayout: height < 760
+    // Issue #11 can bind a real reduced-motion policy here without changing delegates.
+    readonly property bool placementAnimationsEnabled: !compactLayout
     property int rowHeight: compactLayout ? 44 : 52
     property int rowGap: compactLayout ? 2 : 4
     property int drumRowHeight: 44
@@ -712,7 +714,7 @@ ApplicationWindow {
                                     }
 
                                     SequentialAnimation on popScale {
-                                        running: !root.compactLayout
+                                        running: root.placementAnimationsEnabled
                                         NumberAnimation { to: 1.18; duration: 90 }
                                         NumberAnimation { to: 1.0; duration: 150 }
                                     }

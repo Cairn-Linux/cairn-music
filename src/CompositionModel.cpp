@@ -95,14 +95,25 @@ bool CompositionModel::removeLastMeasure()
 
     saveUndoPoint();
     const int firstRemovedStep = (m_measureCount - 1) * stepsPerMeasure();
-    beginResetModel();
     --m_measureCount;
-    for (int row = m_tokens.size() - 1; row >= 0; --row) {
-        if (m_tokens.at(row).step >= firstRemovedStep) {
-            m_tokens.removeAt(row);
+    int searchRow = m_tokens.size() - 1;
+    while (searchRow >= 0) {
+        while (searchRow >= 0 && m_tokens.at(searchRow).step < firstRemovedStep) {
+            --searchRow;
         }
+        if (searchRow < 0) {
+            break;
+        }
+
+        const int lastRemovedRow = searchRow;
+        while (searchRow >= 0 && m_tokens.at(searchRow).step >= firstRemovedStep) {
+            --searchRow;
+        }
+        const int firstRemovedRow = searchRow + 1;
+        beginRemoveRows({}, firstRemovedRow, lastRemovedRow);
+        m_tokens.remove(firstRemovedRow, lastRemovedRow - firstRemovedRow + 1);
+        endRemoveRows();
     }
-    endResetModel();
     emit measureCountChanged();
     return true;
 }
@@ -252,18 +263,69 @@ bool CompositionModel::undo()
     }
 
     const UndoState state = m_undoHistory.takeLast();
-    beginResetModel();
     const bool measureChanged = m_measureCount != state.measureCount;
     m_measureCount = state.measureCount;
-    m_tokens = state.tokens;
-    endResetModel();
     if (measureChanged) {
         emit measureCountChanged();
     }
+    restoreTokens(state.tokens);
     if (m_undoHistory.isEmpty()) {
         emit canUndoChanged();
     }
     return true;
+}
+
+void CompositionModel::restoreTokens(const QVector<Token> &tokens)
+{
+    QSet<QString> restoredIds;
+    for (const Token &token : tokens) {
+        restoredIds.insert(token.id);
+    }
+
+    const QList<int> allRoles{IdRole, KindRole, StepRole, PitchRowRole, SoundIdRole};
+    for (int restoredRow = 0; restoredRow < tokens.size(); ++restoredRow) {
+        const Token &restored = tokens.at(restoredRow);
+        if (restoredRow < m_tokens.size() && m_tokens.at(restoredRow).id == restored.id) {
+            const Token &current = m_tokens.at(restoredRow);
+            if (current.kind != restored.kind || current.step != restored.step
+                || current.pitchRow != restored.pitchRow || current.soundId != restored.soundId) {
+                m_tokens[restoredRow] = restored;
+                emit dataChanged(index(restoredRow), index(restoredRow), allRoles);
+            }
+            continue;
+        }
+
+        int existingRow = -1;
+        for (int row = restoredRow + 1; row < m_tokens.size(); ++row) {
+            if (m_tokens.at(row).id == restored.id) {
+                existingRow = row;
+                break;
+            }
+        }
+        if (existingRow >= 0) {
+            beginMoveRows({}, existingRow, existingRow, {}, restoredRow);
+            m_tokens.move(existingRow, restoredRow);
+            endMoveRows();
+            continue;
+        }
+
+        if (restoredRow < m_tokens.size()
+            && !restoredIds.contains(m_tokens.at(restoredRow).id)) {
+            m_tokens[restoredRow] = restored;
+            emit dataChanged(index(restoredRow), index(restoredRow), allRoles);
+            continue;
+        }
+
+        beginInsertRows({}, restoredRow, restoredRow);
+        m_tokens.insert(restoredRow, restored);
+        endInsertRows();
+    }
+
+    if (m_tokens.size() > tokens.size()) {
+        beginRemoveRows({}, tokens.size(), m_tokens.size() - 1);
+        m_tokens.remove(tokens.size(), m_tokens.size() - tokens.size());
+        endRemoveRows();
+    }
 }
 
 QJsonObject CompositionModel::toJson() const

@@ -195,6 +195,7 @@ private slots:
     void clearsLoopRestartNoticeForSoundPreview();
     void clearsPlaybackIndicatorsForUndoMutation();
     void removesMeasureDuringPlaybackAndUndoRestoresIt();
+    void preservesAnimatingTokenDelegatesAcrossUnrelatedEdits();
     void playheadMovesWithScrollableTimeline();
     void keepsScrolledTimelineInRangeAfterMeasureRemoval();
     void showsSelectedToolBesidePointerOnlyOverGrid();
@@ -2085,6 +2086,92 @@ void QmlSmokeTest::removesMeasureDuringPlaybackAndUndoRestoresIt()
 
     QVERIFY(clickQuickItem(window, QStringLiteral("undoButton")));
     QCOMPARE(controller.composition()->toJson(), beforeRemoval);
+}
+
+void QmlSmokeTest::preservesAnimatingTokenDelegatesAcrossUnrelatedEdits()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+    QVERIFY(controller.addMeasure());
+    controller.selectPitched(1);
+    QVERIFY(controller.placePitched(0, 2));
+    controller.selectPercussion(0);
+    QVERIFY(controller.placePercussion(1));
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(8, 5));
+
+    const QString pitchedId = controller.composition()->data(
+        controller.composition()->index(0), CompositionModel::IdRole).toString();
+    const QString percussionId = controller.composition()->data(
+        controller.composition()->index(1), CompositionModel::IdRole).toString();
+    const QJsonObject beforeTemporaryEdit = controller.composition()->toJson();
+    controller.selectPitched(2);
+    QVERIFY(controller.placePitched(2, 4));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    window->resize(1180, 760);
+    QCoreApplication::processEvents();
+
+    QQuickItem *pitchedToken = findQuickItem(window->contentItem(), "compositionToken-0-2");
+    QQuickItem *percussionToken = findQuickItem(window->contentItem(), "compositionToken-1-0");
+    QQuickItem *removedToken = findQuickItem(window->contentItem(), "compositionToken-8-5");
+    QVERIFY(pitchedToken != nullptr);
+    QVERIFY(percussionToken != nullptr);
+    QVERIFY(removedToken != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(pitchedToken->property("popScale").toReal() > 1.0, 100);
+    QVERIFY(pitchedToken->property("popScale").toReal() < 1.18);
+    QVERIFY(percussionToken->property("popScale").toReal() > 1.0);
+    QPointer<QQuickItem> pitchedIdentity(pitchedToken);
+    QPointer<QQuickItem> percussionIdentity(percussionToken);
+    QPointer<QQuickItem> removedIdentity(removedToken);
+
+    auto clickVisibleControl = [window](QQuickItem *control) {
+        QVERIFY(control != nullptr);
+        QVERIFY(control->isVisible());
+        const QRectF sceneBounds = control->mapRectToScene(control->boundingRect());
+        const QRectF visibleWindow(QPointF(0, 0), QSizeF(window->width(), window->height()));
+        QVERIFY2(visibleWindow.contains(sceneBounds),
+                 "mapped target bounds must remain inside the visible window");
+        const QPointF scenePoint = control->mapToScene(control->boundingRect().center());
+        QVERIFY(sceneBounds.contains(scenePoint));
+        QVERIFY(visibleWindow.contains(scenePoint));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scenePoint.toPoint());
+        QCoreApplication::processEvents();
+    };
+
+    clickVisibleControl(findQuickItem(window->contentItem(), "undoButton"));
+    QCOMPARE(controller.composition()->toJson(), beforeTemporaryEdit);
+    QVERIFY(!pitchedIdentity.isNull());
+    QVERIFY(!percussionIdentity.isNull());
+    QCOMPARE(findQuickItem(window->contentItem(), "compositionToken-0-2"), pitchedIdentity.data());
+    QCOMPARE(findQuickItem(window->contentItem(), "compositionToken-1-0"), percussionIdentity.data());
+    QCOMPARE(controller.composition()->data(
+                 controller.composition()->index(0), CompositionModel::IdRole).toString(), pitchedId);
+    QCOMPARE(controller.composition()->data(
+                 controller.composition()->index(1), CompositionModel::IdRole).toString(), percussionId);
+
+    const QJsonObject beforeRemoval = controller.composition()->toJson();
+    QVERIFY(pitchedIdentity->property("popScale").toReal() > 1.0);
+    clickVisibleControl(findQuickItem(window->contentItem(), "removeMeasureButton"));
+    QVERIFY(!pitchedIdentity.isNull());
+    QVERIFY(!percussionIdentity.isNull());
+    QVERIFY(removedIdentity.isNull());
+    QCOMPARE(findQuickItem(window->contentItem(), "compositionToken-0-2"), pitchedIdentity.data());
+    QCOMPARE(findQuickItem(window->contentItem(), "compositionToken-1-0"), percussionIdentity.data());
+
+    clickVisibleControl(findQuickItem(window->contentItem(), "undoButton"));
+    QCOMPARE(controller.composition()->toJson(), beforeRemoval);
+    QVERIFY(!pitchedIdentity.isNull());
+    QVERIFY(!percussionIdentity.isNull());
+    QCOMPARE(findQuickItem(window->contentItem(), "compositionToken-0-2"), pitchedIdentity.data());
+    QCOMPARE(findQuickItem(window->contentItem(), "compositionToken-1-0"), percussionIdentity.data());
+    QVERIFY(findQuickItem(window->contentItem(), "compositionToken-8-5") != nullptr);
 }
 
 void QmlSmokeTest::playheadMovesWithScrollableTimeline()

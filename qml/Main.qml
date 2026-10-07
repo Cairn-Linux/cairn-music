@@ -27,6 +27,8 @@ ApplicationWindow {
     property var drumNames: [qsTr("Thump"), qsTr("Clap")]
     property bool placementFeedbackVisible: false
     property bool loopRestartNoticeVisible: false
+    readonly property bool toolPointerActive:
+        active && Qt.application.state === Qt.ApplicationActive
     readonly property string placementFeedbackMessage: qsTr("Only three sounds can play here.")
 
     component EraserGlyph: Item {
@@ -548,7 +550,7 @@ ApplicationWindow {
                                             objectName: "pitchCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.pitch)
                                             anchors.fill: parent
-                                            cursorShape: Qt.BlankCursor
+                                            cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
                                             onClicked: {
                                                 if (root.eraseMode)
                                                     app.eraseAt("pitched", parent.stepIndex, parent.pitch)
@@ -606,7 +608,7 @@ ApplicationWindow {
                                             objectName: "drumCellMouse-%1-%2"
                                                 .arg(parent.stepIndex).arg(parent.drumRow)
                                             anchors.fill: parent
-                                            cursorShape: Qt.BlankCursor
+                                            cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
                                             onClicked: {
                                                 if (root.eraseMode)
                                                     app.eraseAt("percussion", parent.stepIndex,
@@ -701,7 +703,7 @@ ApplicationWindow {
                                                   .arg(parent.step).arg(parent.pitchRow)
                                             : ""
                                         anchors.fill: parent
-                                        cursorShape: Qt.BlankCursor
+                                        cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
                                         onClicked: {
                                             if (root.eraseMode)
                                                 app.eraseAt(parent.kind, parent.step, parent.pitchRow)
@@ -726,7 +728,7 @@ ApplicationWindow {
                                 HoverHandler {
                                     id: compositionHover
                                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                                    cursorShape: Qt.BlankCursor
+                                    cursorShape: root.toolPointerActive ? Qt.BlankCursor : Qt.ArrowCursor
                                 }
                             }
 
@@ -734,14 +736,26 @@ ApplicationWindow {
                                 id: activeToolIndicator
                                 objectName: "activeToolIndicator"
                                 readonly property bool eraserTool: root.eraseMode
+                                readonly property real destinationLeft:
+                                    Math.floor(compositionHover.point.position.x
+                                               / root.cellWidth) * root.cellWidth
+                                readonly property real rightOfDestination:
+                                    destinationLeft + root.cellWidth - root.rowGap + 8
                                 width: 36
                                 height: 36
-                                x: Math.min(canvas.width - width,
-                                            Math.max(0, compositionHover.point.position.x + 16))
-                                y: compositionHover.point.position.y >= height + 12
-                                   ? compositionHover.point.position.y - height - 12
-                                   : compositionHover.point.position.y + 16
-                                visible: compositionHover.hovered
+                                x: {
+                                    const viewportLeft = timeline.contentX
+                                    const viewportRight = viewportLeft + timeline.width
+                                    const preferred = rightOfDestination + width <= viewportRight
+                                                      ? rightOfDestination
+                                                      : destinationLeft - width - 8
+                                    return Math.max(viewportLeft,
+                                                    Math.min(viewportRight - width, preferred))
+                                }
+                                y: Math.max(timeline.contentY,
+                                            Math.min(timeline.contentY + timeline.height - height,
+                                                     compositionHover.point.position.y - height / 2))
+                                visible: compositionHover.hovered && root.toolPointerActive
                                 enabled: false
                                 z: 100
                                 radius: eraserTool ? 9

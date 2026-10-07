@@ -85,6 +85,11 @@ public:
         handleState(m_outputState);
     }
 
+    [[nodiscard]] bool resourcesReleased() const noexcept
+    {
+        return !activeBufferOpen() && bufferedByteCount() == 0;
+    }
+
 protected:
     [[nodiscard]] bool outputAvailable() const noexcept override { return true; }
     [[nodiscard]] QAudio::Error outputError() const noexcept override
@@ -139,6 +144,7 @@ private slots:
     void clearsLoopRestartNoticeForStopAndReplay();
     void clearsLoopRestartNoticeForSoundPreview();
     void clearsPlaybackIndicatorsForUndoMutation();
+    void removesMeasureDuringPlaybackAndUndoRestoresIt();
     void playheadMovesWithScrollableTimeline();
     void keepsScrolledTimelineInRangeAfterMeasureRemoval();
     void showsSelectedToolBesidePointerOnlyOverGrid();
@@ -462,6 +468,20 @@ void QmlSmokeTest::removesMeasuresWithAccessiblePointerAndKeyboardControl()
     QCOMPARE(controller.composition()->measureCount(), 3);
     QVERIFY(button->property("enabled").toBool());
 
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(8, 6));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(11));
+    const QJsonObject beforeRemoval = controller.composition()->toJson();
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QVERIFY(clickQuickItem(window, QStringLiteral("undoButton")));
+    QCOMPARE(controller.composition()->toJson(), beforeRemoval);
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
     button->forceActiveFocus(Qt::TabFocusReason);
     QVERIFY(button->hasActiveFocus());
     QTest::keyClick(window, Qt::Key_Space);
@@ -1049,6 +1069,54 @@ void QmlSmokeTest::clearsPlaybackIndicatorsForUndoMutation()
     QVERIFY(!restartBadge->property("visible").toBool());
     QVERIFY(!playhead->property("visible").toBool());
     QVERIFY(!activeToken->property("sounding").toBool());
+}
+
+void QmlSmokeTest::removesMeasureDuringPlaybackAndUndoRestoresIt()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    QVERIFY(controller.addMeasure());
+    controller.selectPitched(2);
+    QVERIFY(controller.placePitched(8, 5));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(11));
+    const QJsonObject beforeRemoval = controller.composition()->toJson();
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QQuickItem *playhead = findQuickItem(window->contentItem(), "playbackPlayhead");
+    QVERIFY(restartBadge != nullptr);
+    QVERIFY(playhead != nullptr);
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("playButton")));
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(controller.playing());
+    QCOMPARE(controller.playbackCycle(), 1);
+    QVERIFY(restartBadge->property("visible").toBool());
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("removeMeasureButton")));
+    QCOMPARE(controller.composition()->measureCount(), 2);
+    QCOMPARE(controller.composition()->rowCount(), 0);
+    QVERIFY(!controller.playing());
+    QVERIFY(fakeAudio->resourcesReleased());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+    QVERIFY(!restartBadge->property("visible").toBool());
+    QVERIFY(!playhead->property("visible").toBool());
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("undoButton")));
+    QCOMPARE(controller.composition()->toJson(), beforeRemoval);
 }
 
 void QmlSmokeTest::playheadMovesWithScrollableTimeline()

@@ -136,6 +136,7 @@ private slots:
     void clearsLoopRestartNoticeWhenLoopIsToggled();
     void clearsLoopRestartNoticeForStopAndReplay();
     void clearsLoopRestartNoticeForSoundPreview();
+    void clearsPlaybackIndicatorsForUndoMutation();
     void playheadMovesWithScrollableTimeline();
 };
 
@@ -933,6 +934,50 @@ void QmlSmokeTest::clearsLoopRestartNoticeForSoundPreview()
     QVERIFY(controller.playing());
     QCOMPARE(controller.playbackStep(), -1);
     QVERIFY(!restartBadge->property("visible").toBool());
+}
+
+void QmlSmokeTest::clearsPlaybackIndicatorsForUndoMutation()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.selectPitched(1);
+    QVERIFY(controller.placePitched(0, 3));
+    QVERIFY(controller.placePitched(7, 4));
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QQuickItem *playhead = findQuickItem(window->contentItem(), "playbackPlayhead");
+    QQuickItem *activeToken = findQuickItem(window->contentItem(), "compositionToken-0-3");
+    QVERIFY(restartBadge != nullptr);
+    QVERIFY(playhead != nullptr);
+    QVERIFY(activeToken != nullptr);
+
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(restartBadge->property("visible").toBool());
+    QVERIFY(playhead->property("visible").toBool());
+    QVERIFY(activeToken->property("sounding").toBool());
+
+    QVERIFY(controller.undo());
+    QCoreApplication::processEvents();
+
+    QVERIFY(!controller.playing());
+    QCOMPARE(controller.playbackStep(), -1);
+    QCOMPARE(controller.playbackCycle(), 0);
+    QVERIFY(!restartBadge->property("visible").toBool());
+    QVERIFY(!playhead->property("visible").toBool());
+    QVERIFY(!activeToken->property("sounding").toBool());
 }
 
 void QmlSmokeTest::playheadMovesWithScrollableTimeline()

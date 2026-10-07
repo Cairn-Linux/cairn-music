@@ -14,7 +14,7 @@ ApplicationWindow {
 
     property bool eraseMode: false
     property int cellWidth: 72
-    readonly property bool compactLayout: height <= minimumHeight
+    readonly property bool compactLayout: height < 760
     property int rowHeight: compactLayout ? 44 : 52
     property int rowGap: compactLayout ? 2 : 4
     property int drumRowHeight: 44
@@ -683,10 +683,12 @@ ApplicationWindow {
                                     required property int soundId
                                     property bool pitched: kind === "pitched"
                                     property bool sounding: app.compositionPlaying && app.playbackStep === step
+                                    property real popScale: 1.0
                                     objectName: "compositionToken-%1-%2".arg(step).arg(pitchRow)
                                     x: step * root.cellWidth + 12
                                     y: pitched
-                                       ? (6 - pitchRow) * (root.rowHeight + root.rowGap) + 9
+                                       ? (6 - pitchRow) * (root.rowHeight + root.rowGap)
+                                           + (root.rowHeight - 42) / 2
                                        : root.drumLaneTop + 5
                                            + pitchRow * (root.drumRowHeight + root.rowGap)
                                     width: pitched ? 42 : 40
@@ -696,6 +698,7 @@ ApplicationWindow {
                                                    : root.drumColors[soundId]
                                     border.color: sounding ? "#2b1a3d" : "#ffffff"
                                     border.width: sounding ? 6 : 3
+                                    scale: root.compactLayout ? 1.0 : popScale
                                     z: 5
 
                                     Text {
@@ -707,8 +710,8 @@ ApplicationWindow {
                                         font.bold: true
                                     }
 
-                                    SequentialAnimation on scale {
-                                        running: true
+                                    SequentialAnimation on popScale {
+                                        running: !root.compactLayout
                                         NumberAnimation { to: 1.18; duration: 90 }
                                         NumberAnimation { to: 1.0; duration: 150 }
                                     }

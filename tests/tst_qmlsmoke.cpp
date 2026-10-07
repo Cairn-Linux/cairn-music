@@ -1000,11 +1000,21 @@ void QmlSmokeTest::keepsSoundLabelsReadableAtSupportedWindowSizes()
 
 void QmlSmokeTest::keepsEveryCompositionLaneVisibleAtSupportedWindowSizes()
 {
-    const QList<QSize> supportedSizes = {QSize(1180, 760), QSize(900, 620)};
+    const QList<QSize> supportedSizes = {
+        QSize(1180, 760),
+        QSize(900, 621),
+        QSize(900, 620),
+    };
     for (const QSize &size : supportedSizes) {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         AppController controller(directory.filePath("autosave.json"), false);
+        QVERIFY(controller.placePitched(0, 0));
+        QVERIFY(controller.placePitched(1, 6));
+        controller.selectPercussion(0);
+        QVERIFY(controller.placePercussion(2));
+        controller.selectPercussion(1);
+        QVERIFY(controller.placePercussion(3));
 
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("app", &controller);
@@ -1044,6 +1054,33 @@ void QmlSmokeTest::keepsEveryCompositionLaneVisibleAtSupportedWindowSizes()
             QVERIFY2(targetRect.width() >= 44.0 && targetRect.height() >= 44.0,
                      qPrintable(QStringLiteral("%1 is too small for a child pointer target")
                                     .arg(objectName)));
+        }
+
+        const QList<QPair<QString, QString>> tokenCells = {
+            {QStringLiteral("compositionToken-0-0"), QStringLiteral("pitchCellMouse-0-0")},
+            {QStringLiteral("compositionToken-1-6"), QStringLiteral("pitchCellMouse-1-6")},
+            {QStringLiteral("compositionToken-2-0"), QStringLiteral("drumCellMouse-2-0")},
+            {QStringLiteral("compositionToken-3-1"), QStringLiteral("drumCellMouse-3-1")},
+        };
+        for (const auto &[tokenName, cellName] : tokenCells) {
+            QQuickItem *token = findQuickItem(window->contentItem(), tokenName);
+            QQuickItem *cell = findQuickItem(window->contentItem(), cellName);
+            QVERIFY2(token != nullptr, qPrintable(tokenName));
+            QVERIFY2(cell != nullptr, qPrintable(cellName));
+            const QRectF tokenRect = token->mapRectToScene(token->boundingRect());
+            const QRectF cellRect = cell->mapRectToScene(cell->boundingRect());
+            QVERIFY2(cellRect.contains(tokenRect),
+                     qPrintable(QStringLiteral("%1 [%2,%3 %4x%5] crosses %6 [%7,%8 %9x%10] at %11x%12")
+                                    .arg(tokenName)
+                                    .arg(tokenRect.x()).arg(tokenRect.y())
+                                    .arg(tokenRect.width()).arg(tokenRect.height())
+                                    .arg(cellName)
+                                    .arg(cellRect.x()).arg(cellRect.y())
+                                    .arg(cellRect.width()).arg(cellRect.height())
+                                    .arg(size.width()).arg(size.height())));
+            QVERIFY2(viewportRect.contains(tokenRect),
+                     qPrintable(QStringLiteral("%1 is clipped at %2x%3")
+                                    .arg(tokenName).arg(size.width()).arg(size.height())));
         }
 
         const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");

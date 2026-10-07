@@ -99,6 +99,8 @@ private slots:
     void preservesMalformedAutosaveUntilNewSongIsConfirmed();
     void reportsAutosaveFailureWhileKeepingAcceptedEditsInMemory();
     void distinguishesPolyphonyRejectionFromSaveFailure();
+    void pitchedLimitRejectionKeepsCompositionPlaybackAndIndicators();
+    void unavailableCommandsKeepCompositionPlaybackAndIndicators();
     void turnsLoopOnDuringPlayback();
     void turnsLoopOffDuringPlayback();
     void stopDoesNotRestartLoopingPlayback();
@@ -109,12 +111,16 @@ private slots:
     void pitchedPlacementAndReplacementStopBeforeMutationThenPreview();
     void percussionPlacementAndExistingTapPreview();
     void unchangedPitchedPlacementPreviewsWithoutSavingOrAddingUndo();
+    void unchangedPitchedPlacementKeepsCompositionPlaybackAndIndicators();
     void unchangedPercussionPlacementDoesNotRetryFailedSave();
+    void unchangedPercussionPlacementKeepsCompositionPlaybackAndIndicators();
+    void emptyEraserClicksKeepCompositionPlaybackAndIndicators();
     void eraserStopsPlaybackBeforeMutation();
     void addMeasureStopsPlaybackBeforeMutation();
     void removeMeasurePersistsAndUndoRestoresExactEvents();
     void removeMeasureStopsPlaybackBeforeMutation();
     void clearSongPersistsAndUndoRestoresExactComposition();
+    void alreadyClearSongKeepsCompositionPlaybackAndIndicators();
     void clearSongStopsPlaybackAndPreviewBeforeMutation();
     void clearSongReportsSaveFailureWithoutLyingAboutMemoryState();
     void recoversFromOutputError();
@@ -262,6 +268,72 @@ void AppControllerTest::distinguishesPolyphonyRejectionFromSaveFailure()
     QVERIFY(controller.placePitched(0, 1));
     QVERIFY(!controller.pitchedPlacementRejected());
     QCOMPARE(controller.composition()->rowCount(), 3);
+}
+
+void AppControllerTest::pitchedLimitRejectionKeepsCompositionPlaybackAndIndicators()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.selectPitched(0);
+    for (int row = 0; row < 3; ++row) {
+        QVERIFY(controller.placePitched(0, row));
+    }
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+    const int playbackStep = controller.playbackStep();
+    const int startCalls = fakeAudio->startCalls;
+    const int stopCalls = fakeAudio->stopCalls;
+
+    QVERIFY(!controller.placePitched(0, 3));
+
+    QVERIFY(controller.pitchedPlacementRejected());
+    QCOMPARE(controller.composition()->rowCount(), 3);
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(fakeAudio->startCalls, startCalls);
+    QCOMPARE(fakeAudio->stopCalls, stopCalls);
+    QCOMPARE(controller.playbackStep(), playbackStep);
+    QCOMPARE(controller.playbackCycle(), 1);
+}
+
+void AppControllerTest::unavailableCommandsKeepCompositionPlaybackAndIndicators()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.play();
+    const int playbackStep = controller.playbackStep();
+    const int stopCalls = fakeAudio->stopCalls;
+
+    QVERIFY(!controller.removeMeasure());
+    QVERIFY(!controller.undo());
+    QVERIFY(!controller.placePitched(-1, 0));
+    QVERIFY(!controller.placePercussion(0));
+
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(fakeAudio->stopCalls, stopCalls);
+    QCOMPARE(controller.playbackStep(), playbackStep);
+
+    controller.stop();
+    for (int measure = 2; measure < 8; ++measure) {
+        QVERIFY(controller.addMeasure());
+    }
+    controller.play();
+    const int maxMeasureStopCalls = fakeAudio->stopCalls;
+    QVERIFY(!controller.addMeasure());
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(fakeAudio->stopCalls, maxMeasureStopCalls);
 }
 
 void AppControllerTest::turnsLoopOnDuringPlayback()
@@ -521,10 +593,9 @@ void AppControllerTest::percussionPlacementAndExistingTapPreview()
 
     QSignalSpy dataChanged(controller.composition(), &QAbstractItemModel::dataChanged);
     const int previewStarts = fakeAudio->startCalls;
-    controller.play();
     QVERIFY(controller.placePercussion(1));
     QCOMPARE(dataChanged.count(), 0);
-    QCOMPARE(fakeAudio->startCalls, previewStarts + 2);
+    QCOMPARE(fakeAudio->startCalls, previewStarts + 1);
     QVERIFY(controller.playing());
     QVERIFY(!controller.compositionPlaying());
     QCOMPARE(controller.playbackStep(), -1);
@@ -565,6 +636,34 @@ void AppControllerTest::unchangedPitchedPlacementPreviewsWithoutSavingOrAddingUn
     QCOMPARE(controller.composition()->rowCount(), 0);
 }
 
+void AppControllerTest::unchangedPitchedPlacementKeepsCompositionPlaybackAndIndicators()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.selectPitched(3);
+    QVERIFY(controller.placePitched(1, 3));
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+    const int playbackStep = controller.playbackStep();
+    const int startCalls = fakeAudio->startCalls;
+    const int stopCalls = fakeAudio->stopCalls;
+
+    QVERIFY(controller.placePitched(1, 3));
+
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(fakeAudio->startCalls, startCalls);
+    QCOMPARE(fakeAudio->stopCalls, stopCalls);
+    QCOMPARE(controller.playbackStep(), playbackStep);
+    QCOMPARE(controller.playbackCycle(), 1);
+}
+
 void AppControllerTest::unchangedPercussionPlacementDoesNotRetryFailedSave()
 {
     QTemporaryDir directory;
@@ -596,6 +695,61 @@ void AppControllerTest::unchangedPercussionPlacementDoesNotRetryFailedSave()
     QCOMPARE(saveFailedChanged.count(), 1);
     QVERIFY(!controller.undo());
     QCOMPARE(controller.composition()->rowCount(), 0);
+}
+
+void AppControllerTest::unchangedPercussionPlacementKeepsCompositionPlaybackAndIndicators()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.selectPercussion(1);
+    QVERIFY(controller.placePercussion(1));
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+    const int playbackStep = controller.playbackStep();
+    const int startCalls = fakeAudio->startCalls;
+    const int stopCalls = fakeAudio->stopCalls;
+
+    QVERIFY(controller.placePercussion(1));
+
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(fakeAudio->startCalls, startCalls);
+    QCOMPARE(fakeAudio->stopCalls, stopCalls);
+    QCOMPARE(controller.playbackStep(), playbackStep);
+    QCOMPARE(controller.playbackCycle(), 1);
+}
+
+void AppControllerTest::emptyEraserClicksKeepCompositionPlaybackAndIndicators()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio));
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+    const int playbackStep = controller.playbackStep();
+    const int stopCalls = fakeAudio->stopCalls;
+
+    QVERIFY(!controller.eraseAt(QStringLiteral("pitched"), 0, 0));
+    QVERIFY(!controller.eraseAt(QStringLiteral("percussion"), 0, 0));
+
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QVERIFY(!fakeAudio->resourcesReleased());
+    QCOMPARE(fakeAudio->stopCalls, stopCalls);
+    QCOMPARE(controller.playbackStep(), playbackStep);
+    QCOMPARE(controller.playbackCycle(), 1);
+    QVERIFY(!controller.playbackStatus().isEmpty());
 }
 
 void AppControllerTest::eraserStopsPlaybackBeforeMutation()
@@ -752,6 +906,36 @@ void AppControllerTest::clearSongPersistsAndUndoRestoresExactComposition()
     QCOMPARE(controller.composition()->toJson(), beforeClear);
     AppController restored(path, false);
     QCOMPARE(restored.composition()->toJson(), beforeClear);
+}
+
+void AppControllerTest::alreadyClearSongKeepsCompositionPlaybackAndIndicators()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<FakeAudioEngine>();
+    FakeAudioEngine *fakeAudio = audio.get();
+    int saveCalls = 0;
+    AppController controller(
+        directory.filePath("autosave.json"), true, std::move(audio),
+        [&saveCalls](const QString &, const CompositionModel &) {
+            ++saveCalls;
+            return true;
+        });
+    controller.setLoopEnabled(true);
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCOMPARE(controller.playbackCycle(), 1);
+    const int playbackStep = controller.playbackStep();
+    const int stopCalls = fakeAudio->stopCalls;
+
+    QVERIFY(!controller.clearSong());
+
+    QCOMPARE(saveCalls, 0);
+    QVERIFY(controller.playing());
+    QVERIFY(controller.compositionPlaying());
+    QCOMPARE(fakeAudio->stopCalls, stopCalls);
+    QCOMPARE(controller.playbackStep(), playbackStep);
+    QCOMPARE(controller.playbackCycle(), 1);
 }
 
 void AppControllerTest::clearSongStopsPlaybackAndPreviewBeforeMutation()

@@ -244,7 +244,9 @@ bool AppController::placePitched(int step, int row)
             return false;
         }
     }
-    if (m_audioEnabled) {
+    const bool shouldPreview = result == CompositionModel::PlacementResult::Changed
+        || !m_compositionPlaybackActive;
+    if (m_audioEnabled && shouldPreview) {
         if (m_audio->play(AudioRenderer::renderPitched(m_selectedSound, row, 220))) {
             setCompositionPlaybackActive(false);
             resetPlaybackProgress();
@@ -271,7 +273,9 @@ bool AppController::placePercussion(int step)
             return false;
         }
     }
-    if (m_audioEnabled) {
+    const bool shouldPreview = result == CompositionModel::PlacementResult::Changed
+        || !m_compositionPlaybackActive;
+    if (m_audioEnabled && shouldPreview) {
         if (m_audio->play(AudioRenderer::renderPercussion(m_selectedSound, 180))) {
             setCompositionPlaybackActive(false);
             resetPlaybackProgress();
@@ -282,7 +286,7 @@ bool AppController::placePercussion(int step)
 
 bool AppController::eraseAt(const QString &kind, int step, int row)
 {
-    if (m_loadFailed) {
+    if (m_loadFailed || !m_composition.hasTokenAt(kind, step, row)) {
         return false;
     }
     stopCompositionPlaybackForMutation();
@@ -318,11 +322,14 @@ bool AppController::removeMeasure()
 
 bool AppController::clearSong()
 {
-    if (m_loadFailed) {
+    if (m_loadFailed
+        || (m_composition.measureCount() == 2 && m_composition.rowCount() == 0)) {
         return false;
     }
     stop();
-    m_composition.clearSong();
+    if (!m_composition.clearSong()) {
+        return false;
+    }
     return save();
 }
 

@@ -1178,15 +1178,20 @@ void QmlSmokeTest::keepsScrolledTimelineInRangeAfterMeasureRemoval()
         QVERIFY(timeline->setProperty("contentX", oldMaximum));
         QCoreApplication::processEvents();
 
-        QVERIFY(controller.removeMeasure());
-        QCoreApplication::processEvents();
-        const qreal newMaximum = qMax(
-            0.0, timeline->property("contentWidth").toReal() - timeline->width());
-        QVERIFY2(timeline->property("contentX").toReal() <= newMaximum + 0.5,
-                 qPrintable(QStringLiteral("contentX %1 exceeds maximum %2 at %3x%4")
-                                .arg(timeline->property("contentX").toReal())
-                                .arg(newMaximum).arg(size.width()).arg(size.height())));
-        QVERIFY(timeline->property("contentX").toReal() >= 0.0);
+        for (int expected = 7; expected >= 2; --expected) {
+            QVERIFY(controller.removeMeasure());
+            QCoreApplication::processEvents();
+            QCOMPARE(controller.composition()->measureCount(), expected);
+            const qreal newMaximum = qMax(
+                0.0, timeline->property("contentWidth").toReal() - timeline->width());
+            QVERIFY2(timeline->property("contentX").toReal() <= newMaximum + 0.5,
+                     qPrintable(QStringLiteral(
+                         "contentX %1 exceeds maximum %2 at %3 measures and %4x%5")
+                                    .arg(timeline->property("contentX").toReal())
+                                    .arg(newMaximum).arg(expected)
+                                    .arg(size.width()).arg(size.height())));
+            QVERIFY(timeline->property("contentX").toReal() >= 0.0);
+        }
     }
 }
 

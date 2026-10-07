@@ -1083,6 +1083,7 @@ void QmlSmokeTest::removesMeasureDuringPlaybackAndUndoRestoresIt()
     QVERIFY(controller.placePitched(8, 5));
     controller.selectPercussion(1);
     QVERIFY(controller.placePercussion(11));
+    controller.stop();
     const QJsonObject beforeRemoval = controller.composition()->toJson();
     controller.setLoopEnabled(true);
 

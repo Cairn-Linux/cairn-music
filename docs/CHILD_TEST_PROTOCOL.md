@@ -30,46 +30,90 @@ An adult facilitator must:
    recording. A screenshot is also a recording and is not part of a child
    session by default.
 
-## Clean local data and launch
+## Initial blank-song reset and launch
 
-Run these commands as the adult from the repository root. `CHILD_SLOT` must be
-exactly `younger` or `older`.
+Run these commands as the adult from the repository root only before that
+child's first observed session, or after an adult explicitly abandons an invalid
+run. Set `CHILD_SLOT` to exactly `younger` or `older`; any other value stops the
+procedure before a path is changed or the prototype is launched.
 
 ```sh
+set -eu
 umask 077
 STUDY_ROOT="$HOME/.local/share/cairn-music-child-test"
 CHILD_SLOT="younger" # change to "older" for the other child
+case "$CHILD_SLOT" in
+    younger|older) ;;
+    *) printf '%s\n' "Invalid CHILD_SLOT: $CHILD_SLOT" >&2; exit 2 ;;
+esac
 SLOT_ROOT="$STUDY_ROOT/$CHILD_SLOT"
+CURRENT_ROOT="$SLOT_ROOT/current"
 
-install -d -m 700 "$STUDY_ROOT" "$SLOT_ROOT"
-if [ -e "$SLOT_ROOT/current" ]; then
-    mv -- "$SLOT_ROOT/current" \
-        "$SLOT_ROOT/archive-before-$(date +%Y%m%dT%H%M%S)"
+install -d -m 700 -- "$STUDY_ROOT" "$SLOT_ROOT"
+if [ -e "$CURRENT_ROOT" ]; then
+    ARCHIVE_ROOT=$(mktemp -d \
+        "$SLOT_ROOT/archive-before-$(date +%Y%m%dT%H%M%S)-XXXXXX")
+    mv -- "$CURRENT_ROOT" "$ARCHIVE_ROOT/current"
 fi
-install -d -m 700 \
-    "$SLOT_ROOT/current/data" \
-    "$SLOT_ROOT/current/config" \
-    "$SLOT_ROOT/current/cache"
+install -d -m 700 -- \
+    "$CURRENT_ROOT/data" \
+    "$CURRENT_ROOT/config" \
+    "$CURRENT_ROOT/cache"
 
 env \
-    XDG_DATA_HOME="$SLOT_ROOT/current/data" \
-    XDG_CONFIG_HOME="$SLOT_ROOT/current/config" \
-    XDG_CACHE_HOME="$SLOT_ROOT/current/cache" \
+    XDG_DATA_HOME="$CURRENT_ROOT/data" \
+    XDG_CONFIG_HOME="$CURRENT_ROOT/config" \
+    XDG_CACHE_HOME="$CURRENT_ROOT/cache" \
     ./build/cairn-music
 ```
 
-This reset is performed once before that child's first observed session, or
-only after an adult explicitly abandons an invalid run. Do not reset between
-that child's initial session and return occasions: automatic reopen must use the
-same `current` slot. Launch every later occasion with the same three `XDG_*`
-values. The separate slots prevent sibling project sharing; mode `0700` keeps
-other local users out. The child remains in the prototype and is not given a
-shell, file manager, file picker, or access to these paths.
+Before handing over the pointer, verify that the selected role matches the child
+and that the prototype opens a blank two-measure song. If it does not, stop and
+fix the setup without the child present. Never delete an old `current` directory;
+the collision-safe archive above keeps unexpected data available for inspection.
 
-Before handing over the pointer, verify that the intended slot is selected and
-that the prototype opens a blank two-measure song. If it does not, stop and fix
-the setup without the child present. Never delete an old `current` directory;
-move it aside as shown so unexpected data can be inspected.
+## Return-session launch
+
+Do not run the reset on a return occasion. Use the existing `current` slot so
+automatic reopen can encounter that child's prior work:
+
+```sh
+set -eu
+umask 077
+STUDY_ROOT="$HOME/.local/share/cairn-music-child-test"
+CHILD_SLOT="younger" # use the slot for this returning child
+case "$CHILD_SLOT" in
+    younger|older) ;;
+    *) printf '%s\n' "Invalid CHILD_SLOT: $CHILD_SLOT" >&2; exit 2 ;;
+esac
+CURRENT_ROOT="$STUDY_ROOT/$CHILD_SLOT/current"
+
+for directory in data config cache; do
+    [ -d "$CURRENT_ROOT/$directory" ] || {
+        printf '%s\n' "Missing return-session directory: $directory" >&2
+        exit 1
+    }
+done
+AUTOSAVE=$(find "$CURRENT_ROOT/data" -type f \
+    -name prototype-autosave.json -print -quit)
+[ -n "$AUTOSAVE" ] || {
+    printf '%s\n' "No prior autosave found for return session" >&2
+    exit 1
+}
+
+env \
+    XDG_DATA_HOME="$CURRENT_ROOT/data" \
+    XDG_CONFIG_HOME="$CURRENT_ROOT/config" \
+    XDG_CACHE_HOME="$CURRENT_ROOT/cache" \
+    ./build/cairn-music
+```
+
+Before handing over the pointer, verify that the selected role matches the child
+and that the prototype reopens that child's prior song. A blank song or another
+child's work is a stop condition, not a reason to continue or reset. The separate
+slots prevent sibling project sharing; mode `0700` keeps other local users out.
+The child remains in the prototype and is not given a shell, file manager, file
+picker, or access to these paths.
 
 ## Facilitation rule
 
@@ -114,23 +158,18 @@ Do not remind, reward, persuade, schedule a mandatory session, or say that the
 child needs to help finish a test. An adult-manufactured return does not count.
 Use the same data slot so the child can encounter prior work.
 
-The gate passes only when all of these are true:
-
-- both children have used the prototype;
-- each child voluntarily returns on two later occasions;
-- the younger child independently creates, plays, autosaves, and reopens a song;
-- the older child independently creates, plays, autosaves, reopens, extends, and
-  edits a song; and
-- no required tutorial or adult step-by-step coaching manufactured those
-  outcomes.
+The pass condition remains: both children voluntarily return twice; the younger
+independently creates and reopens a song; the older also extends and edits one.
+No required tutorial or adult step-by-step coaching is used during the observed
+first-minute flow.
 
 A failure to meet the gate is evidence, not a reason to coach or repeat an
 action until it passes.
 
 ## Stop conditions
 
-Stop immediately if the child withdraws assent, shows distress or sustained
-frustration, or asks to stop. Also stop for repeated technical failure, a crash,
+Stop immediately if the child withdraws assent, shows distress or frustration,
+or asks to stop. Also stop for repeated technical failure, a crash,
 a save warning, unexpected data from the other slot, or accidental exposure of
 unrelated files or applications.
 
@@ -151,13 +190,30 @@ If **"Your song is here, but it is not saved yet."** appears:
    slot before diagnosis:
 
    ```sh
+   set -eu
    umask 077
    STUDY_ROOT="$HOME/.local/share/cairn-music-child-test"
    CHILD_SLOT="younger" # use the slot from this session
+   case "$CHILD_SLOT" in
+       younger|older) ;;
+       *) printf '%s\n' "Invalid CHILD_SLOT: $CHILD_SLOT" >&2; exit 2 ;;
+   esac
    SLOT_ROOT="$STUDY_ROOT/$CHILD_SLOT"
-   SNAPSHOT="$SLOT_ROOT/failure-$(date +%Y%m%dT%H%M%S)"
-   cp -a -- "$SLOT_ROOT/current" "$SNAPSHOT"
-   chmod -R a-w "$SNAPSHOT"
+   CURRENT_ROOT="$SLOT_ROOT/current"
+   [ -d "$CURRENT_ROOT" ] || {
+       printf '%s\n' "Missing current slot: $CURRENT_ROOT" >&2
+       exit 1
+   }
+   SNAPSHOT=$(mktemp -d \
+       "$SLOT_ROOT/failure-$(date +%Y%m%dT%H%M%S)-XXXXXX")
+   cleanup_incomplete_snapshot() {
+       chmod -R u+w -- "$SNAPSHOT" 2>/dev/null || :
+       rm -rf -- "$SNAPSHOT"
+   }
+   trap cleanup_incomplete_snapshot 0 1 2 15
+   cp -a -- "$CURRENT_ROOT/." "$SNAPSHOT/"
+   chmod -R a-w -- "$SNAPSHOT"
+   trap - 0 1 2 15
    printf '%s\n' "$SNAPSHOT"
    ```
 
@@ -176,7 +232,7 @@ the original or recovery copy is preserved.
 
 ## Minimal observation note
 
-Create one note per child slot and use only these fields:
+Create one minimal note per child slot per occasion and use only these fields:
 
 ```text
 slot: younger | older

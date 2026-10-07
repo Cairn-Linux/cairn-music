@@ -78,6 +78,12 @@ public:
     {
     }
 
+    void finishCurrentBuffer()
+    {
+        m_outputState = QAudio::IdleState;
+        handleState(m_outputState);
+    }
+
 protected:
     [[nodiscard]] bool outputAvailable() const noexcept override { return true; }
     [[nodiscard]] QAudio::Error outputError() const noexcept override
@@ -125,6 +131,12 @@ private slots:
     void clicksPitchedPlacementPaths();
     void handlesPitchedPlacementFeedback();
     void keepsAddMeasureUsableAtMinimumSize();
+    void showsCurrentPlaybackStepAndSoundingEvents();
+    void makesLoopRestartVisibleAndAnnouncesIt();
+    void clearsLoopRestartNoticeWhenLoopIsToggled();
+    void clearsLoopRestartNoticeForStopAndReplay();
+    void clearsLoopRestartNoticeForSoundPreview();
+    void playheadMovesWithScrollableTimeline();
 };
 
 void QmlSmokeTest::loadsPicturesWorkspace()
@@ -727,6 +739,230 @@ void QmlSmokeTest::keepsAddMeasureUsableAtMinimumSize()
     QCOMPARE(controller.composition()->measureCount(), 2);
     QVERIFY(clickQuickItem(window, QStringLiteral("addMeasureButton")));
     QCOMPARE(controller.composition()->measureCount(), 3);
+}
+
+void QmlSmokeTest::showsCurrentPlaybackStepAndSoundingEvents()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.selectPitched(1);
+    QVERIFY(controller.placePitched(0, 3));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+
+    auto *window = qobject_cast<QQuickWindow *>(root);
+    QVERIFY(window != nullptr);
+    QQuickItem *playhead = findQuickItem(window->contentItem(), "playbackPlayhead");
+    QObject *status = root->findChild<QObject *>("playbackStatus");
+    QQuickItem *token = findQuickItem(window->contentItem(), "compositionToken-0-3");
+    QVERIFY(playhead != nullptr);
+    QVERIFY(status != nullptr);
+    QVERIFY(token != nullptr);
+    QVERIFY(!playhead->property("visible").toBool());
+    QVERIFY(!playhead->property("enabled").toBool());
+
+    controller.play();
+    QCoreApplication::processEvents();
+    QVERIFY(playhead->property("visible").toBool());
+    QCOMPARE(playhead->property("currentStep").toInt(), 0);
+    QVERIFY(token->property("sounding").toBool());
+    QCOMPARE(status->property("text").toString(), QStringLiteral("Playing beat 1 of 8."));
+
+    QAccessibleInterface *accessible = QAccessible::queryAccessibleInterface(status);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->text(QAccessible::Name), controller.playbackStatus());
+    QCOMPARE(accessible->role(), QAccessible::StaticText);
+
+    QTRY_COMPARE_WITH_TIMEOUT(playhead->property("currentStep").toInt(), 1, 900);
+    QVERIFY(!token->property("sounding").toBool());
+}
+
+void QmlSmokeTest::makesLoopRestartVisibleAndAnnouncesIt()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QVERIFY(restartBadge != nullptr);
+    QVERIFY(!restartBadge->property("visible").toBool());
+
+    QTestAccessibility::initialize();
+    QTestAccessibility::clearEvents();
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+
+    QVERIFY(restartBadge->property("visible").toBool());
+    QCOMPARE(restartBadge->property("text").toString(),
+             QStringLiteral("Loop 2 • back to beat 1"));
+
+    bool announced = false;
+    for (const QAccessibleEvent *event : QTestAccessibility::events()) {
+        if (event->type() != QAccessible::Announcement) {
+            continue;
+        }
+        const auto *announcement = static_cast<const QAccessibleAnnouncementEvent *>(event);
+        if (announcement->message() == controller.playbackStatus()) {
+            announced = true;
+            break;
+        }
+    }
+    QVERIFY(announced);
+    QTRY_VERIFY_WITH_TIMEOUT(!restartBadge->property("visible").toBool(), 2200);
+
+    qDeleteAll(QTestAccessibility::events());
+    QTestAccessibility::clearEvents();
+    QTestAccessibility::cleanup();
+}
+
+void QmlSmokeTest::clearsLoopRestartNoticeWhenLoopIsToggled()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QVERIFY(restartBadge != nullptr);
+    QObject *restartTimer = nullptr;
+    for (QObject *candidate : root->findChildren<QObject *>()) {
+        const QVariant interval = candidate->property("interval");
+        if (interval.isValid() && interval.toInt() == 1600) {
+            restartTimer = candidate;
+            break;
+        }
+    }
+    QVERIFY(restartTimer != nullptr);
+
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(restartBadge->property("visible").toBool());
+    QVERIFY(restartTimer->property("running").toBool());
+
+    controller.setLoopEnabled(false);
+    QCoreApplication::processEvents();
+    QVERIFY(controller.playing());
+    QVERIFY(!restartTimer->property("running").toBool());
+    QVERIFY(!restartBadge->property("visible").toBool());
+
+    controller.setLoopEnabled(true);
+    QCoreApplication::processEvents();
+    QVERIFY(controller.playing());
+    QVERIFY(!restartBadge->property("visible").toBool());
+
+    QTest::qWait(1700);
+    QVERIFY(!restartBadge->property("visible").toBool());
+}
+
+void QmlSmokeTest::clearsLoopRestartNoticeForStopAndReplay()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QVERIFY(restartBadge != nullptr);
+
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(restartBadge->property("visible").toBool());
+
+    controller.stop();
+    controller.play();
+    QCoreApplication::processEvents();
+
+    QVERIFY(!restartBadge->property("visible").toBool());
+}
+
+void QmlSmokeTest::clearsLoopRestartNoticeForSoundPreview()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    QmlAudioEngine *fakeAudio = audio.get();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    controller.setLoopEnabled(true);
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+    QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QVERIFY(restartBadge != nullptr);
+
+    controller.play();
+    fakeAudio->finishCurrentBuffer();
+    QCoreApplication::processEvents();
+    QVERIFY(restartBadge->property("visible").toBool());
+
+    QVERIFY(clickQuickItem(root, QStringLiteral("pitchedSoundButton-1")));
+
+    QVERIFY(controller.playing());
+    QCOMPARE(controller.playbackStep(), -1);
+    QVERIFY(!restartBadge->property("visible").toBool());
+}
+
+void QmlSmokeTest::playheadMovesWithScrollableTimeline()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    auto audio = std::make_unique<QmlAudioEngine>();
+    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    while (controller.composition()->measureCount() < 8) {
+        QVERIFY(controller.addMeasure());
+    }
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+    QQuickItem *timeline = findQuickItem(window->contentItem(), "timeline");
+    QQuickItem *playhead = findQuickItem(window->contentItem(), "playbackPlayhead");
+    QVERIFY(timeline != nullptr);
+    QVERIFY(playhead != nullptr);
+
+    controller.play();
+    QCoreApplication::processEvents();
+    const qreal before = playhead->mapToScene(QPointF()).x();
+    QVERIFY(timeline->setProperty("contentX", 120.0));
+    QCoreApplication::processEvents();
+    const qreal after = playhead->mapToScene(QPointF()).x();
+    QVERIFY(qAbs((before - after) - 120.0) < 1.0);
 }
 
 QTEST_MAIN(QmlSmokeTest)

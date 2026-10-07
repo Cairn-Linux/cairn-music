@@ -1,6 +1,7 @@
 #include "AppController.h"
 
 #include "AudioRenderer.h"
+#include "PlaybackProgress.h"
 #include "ProjectStore.h"
 
 #include <QCryptographicHash>
@@ -46,6 +47,9 @@ AppController::AppController(const QString &autosavePath, bool audioEnabled,
     , m_audioEnabled(audioEnabled)
 {
     m_audio->setParent(nullptr);
+    m_playbackTimer.setInterval(25);
+    connect(&m_playbackTimer, &QTimer::timeout,
+            this, &AppController::refreshPlaybackProgress);
     if (QFileInfo::exists(m_autosavePath)
         && !ProjectStore::load(m_autosavePath, m_composition)) {
         m_loadFailed = true;
@@ -54,8 +58,19 @@ AppController::AppController(const QString &autosavePath, bool audioEnabled,
     connect(m_audio.get(), &AudioEngine::playingChanged, this, [this] {
         if (!m_audio->playing()) {
             m_compositionPlaybackActive = false;
+            resetPlaybackProgress();
         }
         emit playingChanged();
+    });
+    connect(m_audio.get(), &AudioEngine::loopRestarted, this, [this] {
+        if (!m_compositionPlaybackActive) {
+            return;
+        }
+        m_playbackElapsed.restart();
+        ++m_playbackCycle;
+        m_playbackStep = 0;
+        emit playbackProgressChanged();
+        emit loopRestarted();
     });
     connect(m_audio.get(), &AudioEngine::errorChanged,
             this, &AppController::audioFailedChanged);
@@ -84,6 +99,29 @@ bool AppController::loopEnabled() const noexcept
 bool AppController::playing() const noexcept
 {
     return m_audio->playing();
+}
+
+int AppController::playbackStep() const noexcept
+{
+    return m_playbackStep;
+}
+
+int AppController::playbackCycle() const noexcept
+{
+    return m_playbackCycle;
+}
+
+QString AppController::playbackStatus() const
+{
+    if (m_playbackStep < 0) {
+        return {};
+    }
+    const int totalSteps = m_composition.measureCount() * m_composition.stepsPerMeasure();
+    if (m_playbackCycle > 0) {
+        return tr("Loop %1, beat %2 of %3.")
+            .arg(m_playbackCycle + 1).arg(m_playbackStep + 1).arg(totalSteps);
+    }
+    return tr("Playing beat %1 of %2.").arg(m_playbackStep + 1).arg(totalSteps);
 }
 
 bool AppController::loadFailed() const noexcept
@@ -141,6 +179,7 @@ void AppController::selectPitched(int soundId)
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPitched(soundId, 3, 180))) {
             m_compositionPlaybackActive = false;
+            resetPlaybackProgress();
         }
     }
 }
@@ -156,6 +195,7 @@ void AppController::selectPercussion(int soundId)
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPercussion(soundId, 180))) {
             m_compositionPlaybackActive = false;
+            resetPlaybackProgress();
         }
     }
 }
@@ -175,6 +215,7 @@ bool AppController::placePitched(int step, int row)
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPitched(m_selectedSound, row, 220))) {
             m_compositionPlaybackActive = false;
+            resetPlaybackProgress();
         }
     }
     return save();
@@ -189,6 +230,7 @@ bool AppController::placePercussion(int step)
     if (m_audioEnabled) {
         if (m_audio->play(AudioRenderer::renderPercussion(m_selectedSound, 180))) {
             m_compositionPlaybackActive = false;
+            resetPlaybackProgress();
         }
     }
     return save();
@@ -247,6 +289,7 @@ void AppController::play()
         && m_audio->play(AudioRenderer::renderComposition(m_composition.toJson(), 112),
                          m_loopEnabled)) {
         m_compositionPlaybackActive = true;
+        startPlaybackProgress();
     }
 }
 
@@ -266,6 +309,42 @@ void AppController::setLoopEnabled(bool enabled)
         m_audio->setLoopEnabled(enabled);
     }
     emit loopEnabledChanged();
+}
+
+void AppController::startPlaybackProgress()
+{
+    m_playbackElapsed.restart();
+    m_playbackCycle = 0;
+    m_playbackStep = 0;
+    m_playbackTimer.start();
+    emit playbackProgressChanged();
+}
+
+void AppController::resetPlaybackProgress()
+{
+    m_playbackTimer.stop();
+    if (m_playbackStep == -1 && m_playbackCycle == 0) {
+        return;
+    }
+    m_playbackStep = -1;
+    m_playbackCycle = 0;
+    emit playbackProgressChanged();
+}
+
+void AppController::refreshPlaybackProgress()
+{
+    if (!m_compositionPlaybackActive || !m_playbackElapsed.isValid()) {
+        return;
+    }
+    constexpr int beatMilliseconds = 60000 / 112;
+    const int totalSteps = m_composition.measureCount() * m_composition.stepsPerMeasure();
+    const PlaybackProgress::State state = PlaybackProgress::stateAt(
+        m_playbackElapsed.elapsed(), totalSteps, beatMilliseconds, false);
+    if (state.step < 0 || state.step == m_playbackStep) {
+        return;
+    }
+    m_playbackStep = state.step;
+    emit playbackProgressChanged();
 }
 
 bool AppController::save()

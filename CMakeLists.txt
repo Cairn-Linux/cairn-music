@@ -20,6 +20,8 @@ add_library(cairnmusic_core STATIC
     src/AudioRenderer.h
     src/CompositionModel.cpp
     src/CompositionModel.h
+    src/PlaybackProgress.cpp
+    src/PlaybackProgress.h
     src/ProjectStore.cpp
     src/ProjectStore.h
 )
@@ -48,6 +50,10 @@ if(BUILD_TESTING)
     add_executable(tst_appcontroller tests/tst_appcontroller.cpp)
     target_link_libraries(tst_appcontroller PRIVATE cairnmusic_core Qt6::Test)
     add_test(NAME appcontroller COMMAND tst_appcontroller)
+
+    add_executable(tst_playbackprogress tests/tst_playbackprogress.cpp)
+    target_link_libraries(tst_playbackprogress PRIVATE cairnmusic_core Qt6::Test)
+    add_test(NAME playbackprogress COMMAND tst_playbackprogress)
 
     add_executable(tst_qmlsmoke tests/tst_qmlsmoke.cpp)
     target_compile_definitions(tst_qmlsmoke PRIVATE

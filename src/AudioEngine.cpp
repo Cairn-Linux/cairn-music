@@ -126,6 +126,7 @@ void AudioEngine::handleState(QAudio::State state)
     }
     if (m_loop) {
         if (restartPlayback()) {
+            emit loopRestarted();
             return;
         }
         stop();

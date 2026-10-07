@@ -94,6 +94,53 @@ ApplicationWindow {
         onTriggered: root.loopRestartNoticeVisible = false
     }
 
+    Dialog {
+        id: clearSongDialog
+        objectName: "clearSongDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(440, root.width - 48)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        title: qsTr("Clear this song?")
+        onOpened: cancelClearSongButton.forceActiveFocus(Qt.PopupFocusReason)
+
+        contentItem: Label {
+            objectName: "clearSongMessage"
+            text: qsTr("The current song will be cleared.")
+            color: "#3a2948"
+            font.pixelSize: 18
+            wrapMode: Text.WordWrap
+            Accessible.name: text
+            Accessible.role: Accessible.StaticText
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                id: cancelClearSongButton
+                objectName: "cancelClearSongButton"
+                implicitHeight: 44
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                Accessible.name: qsTr("Cancel clearing song")
+            }
+            Button {
+                objectName: "confirmClearSongButton"
+                implicitHeight: 44
+                text: qsTr("Clear Song")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                Accessible.name: qsTr("Confirm Clear Song")
+            }
+            onRejected: clearSongDialog.reject()
+            onAccepted: {
+                clearSongDialog.accept()
+                app.clearSong()
+            }
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
@@ -474,6 +521,14 @@ ApplicationWindow {
                             Accessible.role: Accessible.StaticText
                         }
                         Item { Layout.fillWidth: true }
+                        Button {
+                            objectName: "clearSongButton"
+                            Layout.minimumWidth: 44
+                            Layout.minimumHeight: 44
+                            text: qsTr("Clear Song")
+                            onClicked: clearSongDialog.open()
+                            Accessible.name: qsTr("Clear Song")
+                        }
                         Button {
                             objectName: "removeMeasureButton"
                             Layout.minimumWidth: 44

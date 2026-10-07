@@ -34,6 +34,7 @@ private slots:
     void growsToEightMeasuresButNoFurther();
     void refusesToRemoveEitherMinimumMeasure();
     void removesFinalMeasureEventsAsOneExactlyUndoableEdit();
+    void clearsSongAsOneExactlyUndoableEdit();
     void placesPitchedTokenWithItsOwnSound();
     void rejectsOutOfRangePitchedPlacement();
     void placesPercussionInSeparateKind();
@@ -102,6 +103,23 @@ void CompositionModelTest::removesFinalMeasureEventsAsOneExactlyUndoableEdit()
 
     QVERIFY(model.undo());
     QCOMPARE(model.toJson(), beforeRemoval);
+}
+
+void CompositionModelTest::clearsSongAsOneExactlyUndoableEdit()
+{
+    CompositionModel model;
+    QVERIFY(model.addMeasure());
+    QVERIFY(model.placePitched(2, 1, 0));
+    QVERIFY(model.placePitched(8, 6, 3));
+    QVERIFY(model.placePercussion(11, 1));
+    const QJsonObject beforeClear = model.toJson();
+
+    QVERIFY(model.clearSong());
+    QCOMPARE(model.measureCount(), 2);
+    QCOMPARE(model.rowCount(), 0);
+
+    QVERIFY(model.undo());
+    QCOMPARE(model.toJson(), beforeClear);
 }
 
 void CompositionModelTest::placesPitchedTokenWithItsOwnSound()

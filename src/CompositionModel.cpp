@@ -107,6 +107,24 @@ bool CompositionModel::removeLastMeasure()
     return true;
 }
 
+bool CompositionModel::clearSong()
+{
+    if (m_measureCount == 2 && m_tokens.isEmpty()) {
+        return false;
+    }
+
+    saveUndoPoint();
+    const bool measureChanged = m_measureCount != 2;
+    beginResetModel();
+    m_measureCount = 2;
+    m_tokens.clear();
+    endResetModel();
+    if (measureChanged) {
+        emit measureCountChanged();
+    }
+    return true;
+}
+
 bool CompositionModel::placePitched(int step, int pitchRow, int soundId)
 {
     if (step < 0 || step >= m_measureCount * stepsPerMeasure()

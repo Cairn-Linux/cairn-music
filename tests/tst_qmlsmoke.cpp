@@ -13,6 +13,8 @@
 #include <QTemporaryDir>
 #include <QTranslator>
 
+#include <utility>
+
 #include "AppController.h"
 
 namespace {
@@ -216,6 +218,7 @@ private slots:
     void previewThenPlayUsesCompositionStateThroughQml();
     void reopensPointerEditsFromTemporaryAutosave();
     void exposesKeyboardFocusAndAccessibleControlNames();
+    void makesUtilityControlsReadableAndStateObvious();
     void exposesCompositionCellsToKeyboardAndAccessibility();
     void revealsFocusedCompositionCellsInViewport();
     void offersReducedMotionAndTruthfulInactivityGuidance();
@@ -266,6 +269,120 @@ void QmlSmokeTest::loadsPicturesWorkspace()
     QVERIFY(root->findChild<QObject *>("pitchGrid") != nullptr);
     QVERIFY(root->findChild<QObject *>("drumLane") != nullptr);
     QVERIFY(root->findChild<QObject *>("playButton") != nullptr);
+}
+
+void QmlSmokeTest::makesUtilityControlsReadableAndStateObvious()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+    QVERIFY(controller.placePitched(0, 4));
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    QVERIFY(window != nullptr);
+
+    const QStringList controlNames = {
+        QStringLiteral("undoButton"),
+        QStringLiteral("eraserButton"),
+        QStringLiteral("loopCheckBox"),
+    };
+    const QStringList labelNames = {
+        QStringLiteral("undoLabel"),
+        QStringLiteral("eraserLabel"),
+        QStringLiteral("loopLabel"),
+    };
+    const QList<QSize> supportedSizes = {QSize(900, 620), QSize(1180, 760)};
+    const QString screenshotDirectory = qEnvironmentVariable("CAIRN_SCREENSHOT_DIR");
+    if (!screenshotDirectory.isEmpty())
+        QVERIFY(QDir().mkpath(screenshotDirectory));
+
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        const QRectF windowRect(QPointF(), size);
+        QList<QRectF> controlRects;
+        for (int index = 0; index < controlNames.size(); ++index) {
+            QQuickItem *control = findQuickItem(window->contentItem(), controlNames[index]);
+            QQuickItem *label = findQuickItem(window->contentItem(), labelNames[index]);
+            QVERIFY2(control != nullptr, qPrintable(controlNames[index]));
+            QVERIFY2(label != nullptr, qPrintable(labelNames[index]));
+            QVERIFY2(control->width() >= 100.0, qPrintable(controlNames[index]));
+            QVERIFY2(control->height() >= 44.0, qPrintable(controlNames[index]));
+            const QRectF controlRect = control->mapRectToScene(control->boundingRect());
+            QVERIFY2(windowRect.contains(controlRect), qPrintable(controlNames[index]));
+            for (const QRectF &otherRect : std::as_const(controlRects))
+                QVERIFY2(!controlRect.intersects(otherRect), qPrintable(controlNames[index]));
+            controlRects.append(controlRect);
+            const QFont font = label->property("font").value<QFont>();
+            QVERIFY2(font.pixelSize() >= 18, qPrintable(labelNames[index]));
+            QVERIFY2(font.weight() >= QFont::DemiBold, qPrintable(labelNames[index]));
+        }
+        if (!screenshotDirectory.isEmpty()) {
+            const QString path = QStringLiteral("%1/utility-controls-idle-%2x%3.png")
+                                     .arg(screenshotDirectory).arg(size.width()).arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
+
+    window->resize(900, 620);
+    QCoreApplication::processEvents();
+    QVERIFY(clickQuickItem(window, QStringLiteral("eraserButton")));
+    QQuickItem *eraser = findQuickItem(window->contentItem(), "eraserButton");
+    QQuickItem *eraserBackground = findQuickItem(window->contentItem(), "eraserBackground");
+    QQuickItem *eraserLabel = findQuickItem(window->contentItem(), "eraserLabel");
+    QQuickItem *eraserMark = findQuickItem(window->contentItem(), "eraserMark");
+    QVERIFY(eraser != nullptr);
+    QVERIFY(eraserBackground != nullptr);
+    QVERIFY(eraserLabel != nullptr);
+    QVERIFY(eraserMark != nullptr);
+    QVERIFY(eraser->property("checked").toBool());
+    QVERIFY(eraserMark->isVisible());
+    QCOMPARE(eraserBackground->property("color").value<QColor>(),
+             QColor(eraser->property("selectedBackgroundColor").toString()));
+    QVERIFY(contrastRatio(eraserLabel->property("color").value<QColor>(),
+                          eraserBackground->property("color").value<QColor>()) >= 4.5);
+    eraser->forceActiveFocus(Qt::TabFocusReason);
+    QCoreApplication::processEvents();
+    QVERIFY(eraser->hasActiveFocus());
+    QVERIFY(eraserMark->isVisible());
+    QVERIFY(contrastRatio(QColor(eraser->property("currentBorderColor").toString()),
+                          eraserBackground->property("color").value<QColor>()) >= 3.0);
+
+    QVERIFY(clickQuickItem(window, QStringLiteral("loopCheckBox")));
+    QQuickItem *loop = findQuickItem(window->contentItem(), "loopCheckBox");
+    QQuickItem *loopBackground = findQuickItem(window->contentItem(), "loopBackground");
+    QQuickItem *loopLabel = findQuickItem(window->contentItem(), "loopLabel");
+    QQuickItem *loopMark = findQuickItem(window->contentItem(), "loopMark");
+    QVERIFY(loop != nullptr);
+    QVERIFY(loopBackground != nullptr);
+    QVERIFY(loopLabel != nullptr);
+    QVERIFY(loopMark != nullptr);
+    QVERIFY(loop->property("checked").toBool());
+    QVERIFY(loopMark->isVisible());
+    QCOMPARE(loopBackground->property("color").value<QColor>(),
+             QColor(loop->property("selectedBackgroundColor").toString()));
+    QVERIFY(contrastRatio(loopLabel->property("color").value<QColor>(),
+                          loopBackground->property("color").value<QColor>()) >= 4.5);
+    loop->forceActiveFocus(Qt::TabFocusReason);
+    QCoreApplication::processEvents();
+    QVERIFY(loop->hasActiveFocus());
+    QVERIFY(loopMark->isVisible());
+    QVERIFY(contrastRatio(QColor(loop->property("currentBorderColor").toString()),
+                          loopBackground->property("color").value<QColor>()) >= 3.0);
+
+    for (const QSize &size : supportedSizes) {
+        window->resize(size);
+        QCoreApplication::processEvents();
+        if (!screenshotDirectory.isEmpty()) {
+            const QString path = QStringLiteral("%1/utility-controls-selected-%2x%3.png")
+                                     .arg(screenshotDirectory).arg(size.width()).arg(size.height());
+            QVERIFY2(window->grabWindow().save(path), qPrintable(path));
+        }
+    }
 }
 
 void QmlSmokeTest::showsAutosaveFailureWarning()

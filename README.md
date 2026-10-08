@@ -42,10 +42,10 @@ requires separate provenance and licence review before distribution.
 
 ## Disposable prototype development
 
-The current local prototype uses C++20, Qt 6, QML and Qt Test. It is research
-code, not an authorized package or release.
+The current local prototype uses C++20, Qt 6.8 or newer, QML and Qt Test. It is
+research code, not an authorized package or release.
 
-Configure and build with a Qt 6 installation:
+Configure and build with a Qt 6.8-or-newer installation:
 
 ```sh
 cmake -S . -B build -G Ninja \

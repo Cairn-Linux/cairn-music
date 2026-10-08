@@ -196,6 +196,17 @@ private:
     QAudio::Error m_outputError = QAudio::NoError;
     QAudio::State m_outputState = QAudio::StoppedState;
 };
+
+class ManualPlaybackClock final : public PlaybackClock
+{
+public:
+    void restart() override { m_elapsed = 0; }
+    [[nodiscard]] qint64 elapsed() const noexcept override { return m_elapsed; }
+    void setElapsed(qint64 elapsed) { m_elapsed = elapsed; }
+
+private:
+    qint64 m_elapsed = 0;
+};
 }
 
 class QmlSmokeTest : public QObject
@@ -226,7 +237,7 @@ private slots:
     void focusedPlacedTokensHaveContainedNonColorRings();
     void timelineKeyboardTraversalIsSpatialAndBounded();
     void timelineTabExitSkipsDisabledUndo();
-    void qmlRemainsCompatibleWithDeclaredMinimumQt();
+    void declaresActualMinimumQt();
     void timelineKeepsFocusAfterKeyboardErase();
     void modalPopupsSuspendAndRestartInactivityGuidance();
     void showsNonColorSelectionCuesAndHonestSoundLabels();
@@ -235,6 +246,7 @@ private slots:
     void guidesSelectedDrumToItsVisibleRowThroughPointerPaths();
     void clicksPitchedPlacementPaths();
     void handlesPitchedPlacementFeedback();
+    void exposesControllableFeedbackTimers();
     void keepsPlacementFeedbackFromMovingWorkspace();
     void keepsConcurrentNotificationsStableAndReadable();
     void wrapsLocalizedNotificationsWithoutObscuringWorkspace();
@@ -1736,13 +1748,20 @@ void QmlSmokeTest::timelineTabExitSkipsDisabledUndo()
     QCOMPARE(window->activeFocusItem()->objectName(), QStringLiteral("eraserButton"));
 }
 
-void QmlSmokeTest::qmlRemainsCompatibleWithDeclaredMinimumQt()
+void QmlSmokeTest::declaresActualMinimumQt()
 {
-    QFile qml(QStringLiteral(CAIRN_MUSIC_QML_PATH));
-    QVERIFY(qml.open(QIODevice::ReadOnly));
-    const QByteArray source = qml.readAll();
-    QVERIFY2(!source.contains("focusPolicy:"),
-             "QQuickItem.focusPolicy requires Qt 6.7, but CMake declares Qt 6.2");
+    QDir repository(QFileInfo(QStringLiteral(CAIRN_MUSIC_QML_PATH)).absolutePath());
+    QVERIFY(repository.cdUp());
+
+    QFile cmake(repository.filePath(QStringLiteral("CMakeLists.txt")));
+    QVERIFY(cmake.open(QIODevice::ReadOnly));
+    QVERIFY2(cmake.readAll().contains("find_package(Qt6 6.8 REQUIRED"),
+             "CMake must require the oldest Qt version used by the QML API");
+
+    QFile readme(repository.filePath(QStringLiteral("README.md")));
+    QVERIFY(readme.open(QIODevice::ReadOnly));
+    QVERIFY2(readme.readAll().contains("Qt 6.8 or newer"),
+             "README must document the same minimum Qt version as CMake");
 }
 
 void QmlSmokeTest::timelineKeepsFocusAfterKeyboardErase()
@@ -2057,6 +2076,8 @@ void QmlSmokeTest::guidesSelectedDrumToItsVisibleRowThroughPointerPaths()
         QVERIFY(wrongDrumTarget != nullptr);
         QVERIFY(correctDrumTarget != nullptr);
         QVERIFY(feedback != nullptr);
+        QObject *placementTimer = window->findChild<QObject *>("placementFeedbackTimer");
+        QVERIFY(placementTimer != nullptr);
 
         const QRectF viewportRect = timeline->mapRectToScene(timeline->boundingRect());
         const QRect windowRect(QPoint(0, 0), size);
@@ -2090,9 +2111,10 @@ void QmlSmokeTest::guidesSelectedDrumToItsVisibleRowThroughPointerPaths()
         QCOMPARE(controller.composition()->rowCount(), 1);
         QVERIFY(!feedback->isVisible());
 
+        QVERIFY(placementTimer->setProperty("interval", 1));
         QVERIFY(clickQuickItem(window, QStringLiteral("pitchCellMouse-1-3")));
         QVERIFY(feedback->isVisible());
-        QTRY_VERIFY_WITH_TIMEOUT(!feedback->isVisible(), 2600);
+        QTRY_VERIFY_WITH_TIMEOUT(!feedback->isVisible(), 100);
         QCOMPARE(controller.composition()->rowCount(), 1);
     }
 }
@@ -2137,6 +2159,35 @@ void QmlSmokeTest::clicksPitchedPlacementPaths()
     QCOMPARE(controller.composition()->rowCount(), 3);
 }
 
+void QmlSmokeTest::exposesControllableFeedbackTimers()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller(directory.filePath("autosave.json"), false);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("app", &controller);
+    engine.load(QUrl::fromLocalFile(QStringLiteral(CAIRN_MUSIC_QML_PATH)));
+    QCOMPARE(engine.rootObjects().size(), 1);
+    QObject *root = engine.rootObjects().constFirst();
+
+    QObject *placementTimer = root->findChild<QObject *>("placementFeedbackTimer");
+    QObject *loopTimer = root->findChild<QObject *>("loopRestartNoticeTimer");
+    QVERIFY(placementTimer != nullptr);
+    QVERIFY(loopTimer != nullptr);
+    QCOMPARE(placementTimer->property("interval").toInt(), 2200);
+    QCOMPARE(loopTimer->property("interval").toInt(), 1600);
+
+    QVERIFY(placementTimer->setProperty("interval", 1));
+    QVERIFY(root->setProperty("placementFeedbackVisible", true));
+    QVERIFY(QMetaObject::invokeMethod(placementTimer, "restart", Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(!root->property("placementFeedbackVisible").toBool(), 100);
+
+    QVERIFY(loopTimer->setProperty("interval", 1));
+    QVERIFY(root->setProperty("loopRestartNoticeVisible", true));
+    QVERIFY(QMetaObject::invokeMethod(loopTimer, "restart", Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(!root->property("loopRestartNoticeVisible").toBool(), 100);
+}
+
 void QmlSmokeTest::handlesPitchedPlacementFeedback()
 {
     QTemporaryDir directory;
@@ -2150,7 +2201,9 @@ void QmlSmokeTest::handlesPitchedPlacementFeedback()
 
     QObject *root = engine.rootObjects().constFirst();
     QObject *feedback = root->findChild<QObject *>("placementFeedback");
+    QObject *placementTimer = root->findChild<QObject *>("placementFeedbackTimer");
     QVERIFY(feedback != nullptr);
+    QVERIFY(placementTimer != nullptr);
     QVERIFY(!feedback->property("visible").toBool());
 
     bool placed = false;
@@ -2193,12 +2246,12 @@ void QmlSmokeTest::handlesPitchedPlacementFeedback()
     QVERIFY(!feedback->property("visible").toBool());
     QCOMPARE(controller.composition()->rowCount(), 3);
 
+    QCOMPARE(placementTimer->property("interval").toInt(), 2200);
+    QVERIFY(placementTimer->setProperty("interval", 1));
     QVERIFY(invokePitchedPlacement(root, 0, 3, placed));
     QVERIFY(!placed);
     QVERIFY(feedback->property("visible").toBool());
-    QTest::qWait(1500);
-    QVERIFY(feedback->property("visible").toBool());
-    QTRY_VERIFY_WITH_TIMEOUT(!feedback->property("visible").toBool(), 1200);
+    QTRY_VERIFY_WITH_TIMEOUT(!feedback->property("visible").toBool(), 100);
 
     qDeleteAll(QTestAccessibility::events());
     QTestAccessibility::clearEvents();
@@ -2228,12 +2281,14 @@ void QmlSmokeTest::keepsPlacementFeedbackFromMovingWorkspace()
         QQuickItem *destination = findQuickItem(window->contentItem(), "pitchCellMouse-0-3");
         QQuickItem *playButton = findQuickItem(window->contentItem(), "playButton");
         QObject *feedback = window->findChild<QObject *>("placementFeedback");
+        QObject *placementTimer = window->findChild<QObject *>("placementFeedbackTimer");
         QVERIFY(pitchGrid != nullptr);
         QVERIFY(drumLane != nullptr);
         QVERIFY(palette != nullptr);
         QVERIFY(destination != nullptr);
         QVERIFY(playButton != nullptr);
         QVERIFY(feedback != nullptr);
+        QVERIFY(placementTimer != nullptr);
 
         const QRectF windowRect(QPointF(0, 0), size);
         const QRectF destinationRect = destination->mapRectToScene(destination->boundingRect());
@@ -2256,6 +2311,7 @@ void QmlSmokeTest::keepsPlacementFeedbackFromMovingWorkspace()
             QVERIFY(invokePitchedPlacement(window, 0, pitch, placed));
             QVERIFY(placed);
         }
+        QVERIFY(placementTimer->setProperty("interval", 1));
         QVERIFY(invokePitchedPlacement(window, 0, 3, placed));
         QVERIFY(!placed);
         QCoreApplication::processEvents();
@@ -2266,7 +2322,7 @@ void QmlSmokeTest::keepsPlacementFeedbackFromMovingWorkspace()
             QCOMPARE(stableItems.at(index)->mapToScene(QPointF()), before.at(index));
         }
 
-        QTRY_VERIFY_WITH_TIMEOUT(!feedback->property("visible").toBool(), 2600);
+        QTRY_VERIFY_WITH_TIMEOUT(!feedback->property("visible").toBool(), 100);
         QVERIFY(playButton->hasActiveFocus());
         for (qsizetype index = 0; index < stableItems.size(); ++index) {
             QCOMPARE(stableItems.at(index)->mapToScene(QPointF()), before.at(index));
@@ -2310,6 +2366,7 @@ void QmlSmokeTest::keepsConcurrentNotificationsStableAndReadable()
         QQuickItem *saveLabel = findQuickItem(window->contentItem(), "saveFailureLabel");
         QQuickItem *audioLabel = findQuickItem(window->contentItem(), "audioFailureLabel");
         QQuickItem *placementLabel = findQuickItem(window->contentItem(), "placementFeedbackLabel");
+        QObject *placementTimer = window->findChild<QObject *>("placementFeedbackTimer");
         QVERIFY(pitchGrid != nullptr);
         QVERIFY(drumLane != nullptr);
         QVERIFY(palette != nullptr);
@@ -2322,6 +2379,7 @@ void QmlSmokeTest::keepsConcurrentNotificationsStableAndReadable()
         QVERIFY(saveLabel != nullptr);
         QVERIFY(audioLabel != nullptr);
         QVERIFY(placementLabel != nullptr);
+        QVERIFY(placementTimer != nullptr);
 
         const QList<QQuickItem *> stableItems = {timeline, pitchGrid, drumLane, palette};
         QList<QPointF> before;
@@ -2441,7 +2499,8 @@ void QmlSmokeTest::keepsConcurrentNotificationsStableAndReadable()
             QVERIFY2(window->grabWindow().save(path), qPrintable(path));
         }
 
-        QTRY_VERIFY_WITH_TIMEOUT(!placementBanner->isVisible(), 2600);
+        QVERIFY(placementTimer->setProperty("interval", 1));
+        QTRY_VERIFY_WITH_TIMEOUT(!placementBanner->isVisible(), 100);
         QVERIFY(saveBanner->isVisible());
         QVERIFY(audioBanner->isVisible());
         QVERIFY(playButton->hasActiveFocus());
@@ -2642,7 +2701,10 @@ void QmlSmokeTest::showsCurrentPlaybackStepAndSoundingEvents()
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     auto audio = std::make_unique<QmlAudioEngine>();
-    AppController controller(directory.filePath("autosave.json"), true, std::move(audio));
+    auto clock = std::make_unique<ManualPlaybackClock>();
+    ManualPlaybackClock *manualClock = clock.get();
+    AppController controller(directory.filePath("autosave.json"), true,
+                             std::move(audio), std::move(clock), nullptr);
     controller.selectPitched(1);
     QVERIFY(controller.placePitched(0, 3));
 
@@ -2675,7 +2737,11 @@ void QmlSmokeTest::showsCurrentPlaybackStepAndSoundingEvents()
     QCOMPARE(accessible->text(QAccessible::Name), controller.playbackStatus());
     QCOMPARE(accessible->role(), QAccessible::StaticText);
 
-    QTRY_COMPARE_WITH_TIMEOUT(playhead->property("currentStep").toInt(), 1, 900);
+    manualClock->setElapsed(60000 / 112);
+    QVERIFY(QMetaObject::invokeMethod(
+        &controller, "refreshPlaybackProgress", Qt::DirectConnection));
+    QCoreApplication::processEvents();
+    QCOMPARE(playhead->property("currentStep").toInt(), 1);
     QVERIFY(!token->property("sounding").toBool());
 }
 
@@ -2694,8 +2760,12 @@ void QmlSmokeTest::makesLoopRestartVisibleAndAnnouncesIt()
     QCOMPARE(engine.rootObjects().size(), 1);
     QObject *root = engine.rootObjects().constFirst();
     QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
+    QObject *restartTimer = root->findChild<QObject *>("loopRestartNoticeTimer");
     QVERIFY(restartBadge != nullptr);
+    QVERIFY(restartTimer != nullptr);
     QVERIFY(!restartBadge->property("visible").toBool());
+    QCOMPARE(restartTimer->property("interval").toInt(), 1600);
+    QVERIFY(restartTimer->setProperty("interval", 25));
 
     QTestAccessibility::initialize();
     QTestAccessibility::clearEvents();
@@ -2719,7 +2789,7 @@ void QmlSmokeTest::makesLoopRestartVisibleAndAnnouncesIt()
         }
     }
     QVERIFY(announced);
-    QTRY_VERIFY_WITH_TIMEOUT(!restartBadge->property("visible").toBool(), 2200);
+    QTRY_VERIFY_WITH_TIMEOUT(!restartBadge->property("visible").toBool(), 100);
 
     qDeleteAll(QTestAccessibility::events());
     QTestAccessibility::clearEvents();
@@ -2742,14 +2812,7 @@ void QmlSmokeTest::clearsLoopRestartNoticeWhenLoopIsToggled()
     QObject *root = engine.rootObjects().constFirst();
     QObject *restartBadge = root->findChild<QObject *>("loopRestartBadge");
     QVERIFY(restartBadge != nullptr);
-    QObject *restartTimer = nullptr;
-    for (QObject *candidate : root->findChildren<QObject *>()) {
-        const QVariant interval = candidate->property("interval");
-        if (interval.isValid() && interval.toInt() == 1600) {
-            restartTimer = candidate;
-            break;
-        }
-    }
+    QObject *restartTimer = root->findChild<QObject *>("loopRestartNoticeTimer");
     QVERIFY(restartTimer != nullptr);
 
     controller.play();
@@ -2769,7 +2832,7 @@ void QmlSmokeTest::clearsLoopRestartNoticeWhenLoopIsToggled()
     QVERIFY(controller.playing());
     QVERIFY(!restartBadge->property("visible").toBool());
 
-    QTest::qWait(1700);
+    QCoreApplication::processEvents();
     QVERIFY(!restartBadge->property("visible").toBool());
 }
 

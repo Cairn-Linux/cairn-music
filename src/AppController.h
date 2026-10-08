@@ -3,13 +3,20 @@
 #include "AudioEngine.h"
 #include "CompositionModel.h"
 
-#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 #include <QTimer>
 
 #include <functional>
 #include <memory>
+
+class PlaybackClock
+{
+public:
+    virtual ~PlaybackClock() = default;
+    virtual void restart() = 0;
+    [[nodiscard]] virtual qint64 elapsed() const noexcept = 0;
+};
 
 class AppController final : public QObject
 {
@@ -39,6 +46,10 @@ public:
                            QObject *parent = nullptr);
     AppController(const QString &autosavePath, bool audioEnabled,
                   std::unique_ptr<AudioEngine> audio, QObject *parent = nullptr);
+    AppController(const QString &autosavePath, bool audioEnabled,
+                  std::unique_ptr<AudioEngine> audio,
+                  std::unique_ptr<PlaybackClock> playbackClock,
+                  QObject *parent);
     AppController(const QString &autosavePath, bool audioEnabled,
                   std::unique_ptr<AudioEngine> audio, SaveFunction saveFunction,
                   QObject *parent = nullptr);
@@ -87,6 +98,9 @@ signals:
     void pitchedPlacementRejectedChanged();
 
 private:
+    AppController(const QString &autosavePath, bool audioEnabled,
+                  std::unique_ptr<AudioEngine> audio, SaveFunction saveFunction,
+                  std::unique_ptr<PlaybackClock> playbackClock, QObject *parent);
     bool save();
     bool ensureRecoveryCopy();
     void setPitchedPlacementRejected(bool rejected);
@@ -94,10 +108,14 @@ private:
     void stopCompositionPlaybackForMutation();
     void startPlaybackProgress();
     void resetPlaybackProgress();
+
+private slots:
     void refreshPlaybackProgress();
 
+private:
     CompositionModel m_composition;
     std::unique_ptr<AudioEngine> m_audio;
+    std::unique_ptr<PlaybackClock> m_playbackClock;
     SaveFunction m_saveFunction;
     QString m_autosavePath;
     QString m_selectedKind = QStringLiteral("pitched");
@@ -110,7 +128,6 @@ private:
     bool m_compositionPlaybackActive = false;
     int m_playbackStep = -1;
     int m_playbackCycle = 0;
-    QElapsedTimer m_playbackElapsed;
     QTimer m_playbackTimer;
     QString m_recoveryPath;
 };

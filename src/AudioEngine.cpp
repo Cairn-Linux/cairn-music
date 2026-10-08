@@ -113,9 +113,8 @@ void AudioEngine::releasePlayback()
 
 void AudioEngine::handleState(QAudio::State state)
 {
-    // QAudioSink reports some failures, notably UnderrunError, with IdleState
-    // rather than StoppedState. Handle the error before interpreting Idle as
-    // either natural completion or a loop boundary.
+    // Handle output errors before interpreting Idle as either natural
+    // completion or a loop boundary.
     if (outputError() != QAudio::NoError) {
         stop();
         setError(true);

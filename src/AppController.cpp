@@ -8,10 +8,26 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QElapsedTimer>
 #include <QStandardPaths>
 #include <QUuid>
 
 namespace {
+class ElapsedPlaybackClock final : public PlaybackClock
+{
+public:
+    void restart() override { m_elapsed.restart(); }
+    [[nodiscard]] qint64 elapsed() const noexcept override { return m_elapsed.elapsed(); }
+
+private:
+    QElapsedTimer m_elapsed;
+};
+
+std::unique_ptr<PlaybackClock> makePlaybackClock()
+{
+    return std::make_unique<ElapsedPlaybackClock>();
+}
+
 QByteArray fileSha256(const QString &path)
 {
     QFile file(path);
@@ -32,22 +48,41 @@ QByteArray fileSha256(const QString &path)
 }
 
 AppController::AppController(const QString &autosavePath, bool audioEnabled, QObject *parent)
-    : AppController(autosavePath, audioEnabled, std::make_unique<AudioEngine>(), parent)
+    : AppController(autosavePath, audioEnabled,
+                    std::make_unique<AudioEngine>(audioEnabled), parent)
 {
 }
 
 AppController::AppController(const QString &autosavePath, bool audioEnabled,
                              std::unique_ptr<AudioEngine> audio, QObject *parent)
     : AppController(autosavePath, audioEnabled, std::move(audio),
-                    ProjectStore::save, parent)
+                    ProjectStore::save, makePlaybackClock(), parent)
+{
+}
+
+AppController::AppController(const QString &autosavePath, bool audioEnabled,
+                             std::unique_ptr<AudioEngine> audio,
+                             std::unique_ptr<PlaybackClock> playbackClock,
+                             QObject *parent)
+    : AppController(autosavePath, audioEnabled, std::move(audio),
+                    ProjectStore::save, std::move(playbackClock), parent)
 {
 }
 
 AppController::AppController(const QString &autosavePath, bool audioEnabled,
                              std::unique_ptr<AudioEngine> audio, SaveFunction saveFunction,
                              QObject *parent)
+    : AppController(autosavePath, audioEnabled, std::move(audio),
+                    std::move(saveFunction), makePlaybackClock(), parent)
+{
+}
+
+AppController::AppController(const QString &autosavePath, bool audioEnabled,
+                             std::unique_ptr<AudioEngine> audio, SaveFunction saveFunction,
+                             std::unique_ptr<PlaybackClock> playbackClock, QObject *parent)
     : QObject(parent)
-    , m_audio(audio ? std::move(audio) : std::make_unique<AudioEngine>())
+    , m_audio(audio ? std::move(audio) : std::make_unique<AudioEngine>(audioEnabled))
+    , m_playbackClock(playbackClock ? std::move(playbackClock) : makePlaybackClock())
     , m_saveFunction(saveFunction ? std::move(saveFunction) : ProjectStore::save)
     , m_autosavePath(autosavePath.isEmpty()
           ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
@@ -75,7 +110,7 @@ AppController::AppController(const QString &autosavePath, bool audioEnabled,
         if (!m_compositionPlaybackActive) {
             return;
         }
-        m_playbackElapsed.restart();
+        m_playbackClock->restart();
         ++m_playbackCycle;
         m_playbackStep = 0;
         emit playbackProgressChanged();
@@ -406,7 +441,7 @@ void AppController::setLoopEnabled(bool enabled)
 
 void AppController::startPlaybackProgress()
 {
-    m_playbackElapsed.restart();
+    m_playbackClock->restart();
     m_playbackCycle = 0;
     m_playbackStep = 0;
     m_playbackTimer.start();
@@ -426,13 +461,13 @@ void AppController::resetPlaybackProgress()
 
 void AppController::refreshPlaybackProgress()
 {
-    if (!m_compositionPlaybackActive || !m_playbackElapsed.isValid()) {
+    if (!m_compositionPlaybackActive) {
         return;
     }
     constexpr int beatMilliseconds = 60000 / 112;
     const int totalSteps = m_composition.measureCount() * m_composition.stepsPerMeasure();
     const PlaybackProgress::State state = PlaybackProgress::stateAt(
-        m_playbackElapsed.elapsed(), totalSteps, beatMilliseconds, false);
+        m_playbackClock->elapsed(), totalSteps, beatMilliseconds, false);
     if (state.step < 0 || state.step == m_playbackStep) {
         return;
     }

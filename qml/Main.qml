@@ -312,6 +312,7 @@ ApplicationWindow {
 
     Timer {
         id: placementFeedbackTimer
+        objectName: "placementFeedbackTimer"
         interval: 2200
         repeat: false
         onTriggered: root.placementFeedbackVisible = false
@@ -337,6 +338,7 @@ ApplicationWindow {
 
     Timer {
         id: loopRestartNoticeTimer
+        objectName: "loopRestartNoticeTimer"
         interval: 1600
         repeat: false
         onTriggered: root.loopRestartNoticeVisible = false

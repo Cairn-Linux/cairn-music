@@ -30,9 +30,9 @@ public:
         handleState(m_outputState);
     }
 
-    void failWithUnderrun()
+    void failWhileIdle()
     {
-        m_outputError = QAudio::UnderrunError;
+        m_outputError = QAudio::IOError;
         m_outputState = QAudio::IdleState;
         handleState(m_outputState);
     }
@@ -90,11 +90,23 @@ private:
     QAudio::State m_outputState = QAudio::StoppedState;
 };
 
+class ManualPlaybackClock final : public PlaybackClock
+{
+public:
+    void restart() override { m_elapsed = 0; }
+    [[nodiscard]] qint64 elapsed() const noexcept override { return m_elapsed; }
+    void setElapsed(qint64 elapsed) { m_elapsed = elapsed; }
+
+private:
+    qint64 m_elapsed = 0;
+};
+
 class AppControllerTest : public QObject
 {
     Q_OBJECT
 
 private slots:
+    void disabledAudioDoesNotReportUnavailableDevice();
     void placesSelectedSoundAndReopensAutosave();
     void preservesMalformedAutosaveUntilNewSongIsConfirmed();
     void reportsAutosaveFailureWhileKeepingAcceptedEditsInMemory();
@@ -124,12 +136,29 @@ private slots:
     void clearSongStopsPlaybackAndPreviewBeforeMutation();
     void clearSongReportsSaveFailureWithoutLyingAboutMemoryState();
     void recoversFromOutputError();
-    void idleUnderrunStopsInsteadOfRestartingLoop();
+    void idleOutputErrorStopsInsteadOfRestartingLoop();
     void failedLoopRestartBecomesRecoverableError();
     void repeatedPlayStopCyclesStayConsistent();
     void exposesPlaybackStepAndSemanticStatus();
     void reportsLoopRestart();
 };
+
+void AppControllerTest::disabledAudioDoesNotReportUnavailableDevice()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    AppController controller(directory.filePath("autosave.json"), false);
+
+    QVERIFY(!controller.audioFailed());
+    QVERIFY(!controller.playing());
+
+    AppController nullInjectedController(
+        directory.filePath("second-autosave.json"), false,
+        std::unique_ptr<AudioEngine>{});
+    QVERIFY(!nullInjectedController.audioFailed());
+    QVERIFY(!nullInjectedController.playing());
+}
 
 void AppControllerTest::placesSelectedSoundAndReopensAutosave()
 {
@@ -1035,7 +1064,7 @@ void AppControllerTest::recoversFromOutputError()
     QCOMPARE(audioFailedChanged.count(), 2);
 }
 
-void AppControllerTest::idleUnderrunStopsInsteadOfRestartingLoop()
+void AppControllerTest::idleOutputErrorStopsInsteadOfRestartingLoop()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -1048,7 +1077,7 @@ void AppControllerTest::idleUnderrunStopsInsteadOfRestartingLoop()
     controller.play();
     QCOMPARE(fakeAudio->startCalls, 1);
 
-    fakeAudio->failWithUnderrun();
+    fakeAudio->failWhileIdle();
 
     QVERIFY(!controller.playing());
     QVERIFY(controller.audioFailed());
@@ -1109,8 +1138,10 @@ void AppControllerTest::exposesPlaybackStepAndSemanticStatus()
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     auto audio = std::make_unique<FakeAudioEngine>();
+    auto clock = std::make_unique<ManualPlaybackClock>();
+    ManualPlaybackClock *manualClock = clock.get();
     AppController controller(directory.filePath("autosave.json"), true,
-                             std::move(audio));
+                             std::move(audio), std::move(clock), nullptr);
 
     QCOMPARE(controller.playbackStep(), -1);
     QVERIFY(controller.playbackStatus().isEmpty());
@@ -1120,7 +1151,10 @@ void AppControllerTest::exposesPlaybackStepAndSemanticStatus()
     QCOMPARE(controller.playbackCycle(), 0);
     QCOMPARE(controller.playbackStatus(), QStringLiteral("Playing beat 1 of 8."));
 
-    QTRY_COMPARE_WITH_TIMEOUT(controller.playbackStep(), 1, 900);
+    manualClock->setElapsed(60000 / 112);
+    QVERIFY(QMetaObject::invokeMethod(
+        &controller, "refreshPlaybackProgress", Qt::DirectConnection));
+    QCOMPARE(controller.playbackStep(), 1);
     QCOMPARE(controller.playbackStatus(), QStringLiteral("Playing beat 2 of 8."));
 
     controller.stop();

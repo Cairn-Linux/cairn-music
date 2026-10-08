@@ -61,6 +61,9 @@ ApplicationWindow {
 
 
     component EraserGlyph: Item {
+        id: eraserGlyphRoot
+        property bool selected: false
+        property string selectionMarkObjectName: ""
         width: 32
         height: 28
 
@@ -94,6 +97,28 @@ ApplicationWindow {
                 height: parent.height - 4
                 anchors.verticalCenter: parent.verticalCenter
                 color: "#49324f"
+            }
+        }
+
+        Rectangle {
+            objectName: eraserGlyphRoot.selectionMarkObjectName
+            anchors.top: parent.top
+            anchors.right: parent.right
+            width: 16
+            height: 16
+            radius: 8
+            visible: eraserGlyphRoot.selected
+            color: "#21152f"
+            border.color: "#fff8ec"
+            border.width: 1
+
+            Text {
+                anchors.centerIn: parent
+                text: "✓"
+                color: "#fff8ec"
+                font.pixelSize: 12
+                font.bold: true
+                Accessible.ignored: true
             }
         }
     }
@@ -382,7 +407,7 @@ ApplicationWindow {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 14
+            spacing: root.width < 1280 ? 4 : 14
 
             ColumnLayout {
                 spacing: 1
@@ -395,9 +420,10 @@ ApplicationWindow {
                 }
                 Label {
                     text: qsTr("Make a sound. Place a picture. Hear your song.")
-                    Layout.maximumWidth: root.width < 1004 ? 400 : 600
+                    Layout.maximumWidth: root.width < 1004 ? 300
+                        : root.width < 1280 ? 480 : 600
                     color: "#fff8ec"
-                    font.pixelSize: 25
+                    font.pixelSize: root.width < 1004 ? 20 : 25
                     font.bold: true
                     wrapMode: Text.WordWrap
                 }
@@ -408,30 +434,78 @@ ApplicationWindow {
             ToolButton {
                 id: undoButton
                 objectName: "undoButton"
+                readonly property color normalBackgroundColor: "#46325d"
+                readonly property color hoverBackgroundColor: "#5b4774"
+                readonly property color disabledBackgroundColor: "#2b2139"
+                readonly property color currentBackgroundColor: !enabled
+                    ? disabledBackgroundColor : hovered ? hoverBackgroundColor : normalBackgroundColor
+                readonly property color currentTextColor: enabled
+                    ? root.panelTextColor : root.panelDisabledColor
                 Layout.minimumHeight: 44
+                Layout.minimumWidth: 100
                 text: qsTr("↶  Undo")
                 enabled: app.composition.canUndo
-                font.pixelSize: 16
+                font.pixelSize: 18
+                font.bold: true
                 onClicked: {
                     root.markInteraction()
                     app.undo()
                 }
                 Accessible.name: qsTr("Undo last change")
+
+                background: Rectangle {
+                    id: undoBackground
+                    objectName: "undoBackground"
+                    radius: 12
+                    color: undoButton.currentBackgroundColor
+                    border.color: undoButton.activeFocus ? root.panelFocusColor : "#6e5a83"
+                    border.width: undoButton.activeFocus ? 3 : 1
+                }
+
+                contentItem: Text {
+                    id: undoLabel
+                    objectName: "undoLabel"
+                    text: undoButton.text
+                    color: undoButton.currentTextColor
+                    font: undoButton.font
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
             }
             ToolButton {
                 id: eraserButton
                 objectName: "eraserButton"
+                readonly property color selectedBackgroundColor: root.panelFocusColor
+                readonly property color normalBackgroundColor: "#46325d"
+                readonly property color hoverBackgroundColor: "#5b4774"
+                readonly property color selectedBorderColor: "#21152f"
+                readonly property color currentBackgroundColor: checked ? selectedBackgroundColor
+                    : hovered ? hoverBackgroundColor : normalBackgroundColor
+                readonly property color currentTextColor: checked ? "#21152f" : root.panelTextColor
+                readonly property color currentBorderColor: activeFocus
+                    ? (checked ? selectedBorderColor : root.panelFocusColor)
+                    : checked ? selectedBorderColor : "#6e5a83"
                 Layout.minimumHeight: 44
                 Layout.minimumWidth: 112
                 text: qsTr("Eraser")
                 checkable: true
                 checked: root.eraseMode
-                font.pixelSize: 16
+                font.pixelSize: 18
+                font.bold: true
                 onClicked: {
                     root.markInteraction()
                     root.eraseMode = checked
                 }
                 Accessible.name: qsTr("Eraser tool")
+
+                background: Rectangle {
+                    id: eraserBackground
+                    objectName: "eraserBackground"
+                    radius: 12
+                    color: eraserButton.currentBackgroundColor
+                    border.color: eraserButton.currentBorderColor
+                    border.width: eraserButton.activeFocus ? 3 : eraserButton.checked ? 2 : 1
+                }
 
                 contentItem: Row {
                     spacing: 8
@@ -440,12 +514,16 @@ ApplicationWindow {
                     EraserGlyph {
                         id: eraserIcon
                         objectName: "eraserIcon"
+                        selected: eraserButton.checked
+                        selectionMarkObjectName: "eraserMark"
                     }
 
                     Text {
+                        id: eraserLabel
+                        objectName: "eraserLabel"
                         anchors.verticalCenter: parent.verticalCenter
                         text: eraserButton.text
-                        color: "#fff8ec"
+                        color: eraserButton.currentTextColor
                         font: eraserButton.font
                     }
                 }
@@ -464,16 +542,73 @@ ApplicationWindow {
                 Accessible.name: app.compositionPlaying ? qsTr("Stop song") : qsTr("Play song")
             }
             CheckBox {
+                id: loopCheckBox
                 objectName: "loopCheckBox"
+                readonly property color selectedBackgroundColor: root.soundColors[2]
+                readonly property color normalBackgroundColor: "#46325d"
+                readonly property color hoverBackgroundColor: "#5b4774"
+                readonly property color selectedBorderColor: "#21152f"
+                readonly property color currentBackgroundColor: checked ? selectedBackgroundColor
+                    : hovered ? hoverBackgroundColor : normalBackgroundColor
+                readonly property color currentTextColor: checked ? "#21152f" : root.panelTextColor
+                readonly property color currentBorderColor: activeFocus
+                    ? (checked ? selectedBorderColor : root.panelFocusColor)
+                    : checked ? selectedBorderColor : "#6e5a83"
                 Layout.minimumHeight: 44
+                Layout.minimumWidth: 100
                 text: qsTr("Loop")
-                font.pixelSize: 15
+                font.pixelSize: 18
+                font.bold: true
                 checked: app.loopEnabled
                 onToggled: {
                     root.markInteraction()
                     app.loopEnabled = checked
                 }
                 Accessible.name: qsTr("Loop whole song")
+
+                background: Rectangle {
+                    id: loopBackground
+                    objectName: "loopBackground"
+                    radius: 12
+                    color: loopCheckBox.currentBackgroundColor
+                    border.color: loopCheckBox.currentBorderColor
+                    border.width: loopCheckBox.activeFocus ? 3 : loopCheckBox.checked ? 2 : 1
+                }
+
+                indicator: Rectangle {
+                    id: loopIndicator
+                    objectName: "loopIndicator"
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    x: loopCheckBox.leftPadding
+                    y: (loopCheckBox.height - height) / 2
+                    radius: 7
+                    color: loopCheckBox.checked ? "#fff8ec" : "transparent"
+                    border.color: loopCheckBox.checked ? "#21152f" : root.panelTextColor
+                    border.width: 3
+
+                    Text {
+                        id: loopMark
+                        objectName: "loopMark"
+                        anchors.centerIn: parent
+                        visible: loopCheckBox.checked
+                        text: "✓"
+                        color: "#21152f"
+                        font.pixelSize: 19
+                        font.bold: true
+                        Accessible.ignored: true
+                    }
+                }
+
+                contentItem: Text {
+                    id: loopLabel
+                    objectName: "loopLabel"
+                    leftPadding: loopCheckBox.indicator.width + loopCheckBox.spacing
+                    text: loopCheckBox.text
+                    color: loopCheckBox.currentTextColor
+                    font: loopCheckBox.font
+                    verticalAlignment: Text.AlignVCenter
+                }
             }
         }
 

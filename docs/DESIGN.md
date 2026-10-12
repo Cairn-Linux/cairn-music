@@ -83,12 +83,12 @@ capability, provided the application does not teach a false musical model.
 
 The first prototype testers are:
 
-- **Zelda**, almost five, taking basic music lessons through Let's Play Music;
-- **Shepard**, almost seven, taking piano through Let's Play Music and playing
-  with both hands.
+- **the younger child**, at the start of the age band, with basic music
+  lessons;
+- **the older child**, with piano lessons and playing with both hands.
 
-Zelda is the discoverability gate. Shepard tests whether editing and extending
-a song remains interesting after the first interaction.
+The younger child is the discoverability gate. The older child tests whether
+editing and extending a song remains interesting after the first interaction.
 
 Evidence from these sessions validates only this prototype with these children.
 It does not establish universal usability, accessibility, or learning claims.
@@ -497,10 +497,10 @@ pass the prototype.
 
 The prototype advances only if:
 
-- Zelda and Shepard each use it;
+- the younger and the older child each use it;
 - each voluntarily returns on two later occasions;
-- Zelda independently creates, plays, saves, and reopens a song;
-- Shepard also extends and edits a song; and
+- the younger child independently creates, plays, saves, and reopens a song;
+- the older child also extends and edits a song; and
 - an adult prompt does not manufacture the return behavior.
 
 A scheduled mandatory session is not a voluntary return. Adult reviewers may
